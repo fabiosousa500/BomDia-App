@@ -45,6 +45,7 @@
   #cam video{flex:1;width:100%;object-fit:cover}
   #cam .mira{position:absolute;left:10%;right:10%;top:35%;height:22%;border:3px solid #4cf;border-radius:10px;box-shadow:0 0 0 999px #0005;pointer-events:none}
   #cam button{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);background:#fff;color:#000;padding:14px 28px}
+  #cam #cam-t{top:calc(16px + env(safe-area-inset-top));right:16px;bottom:auto;left:auto;transform:none;font-size:26px;padding:10px 16px;border-radius:50%;z-index:2}
   #toast{position:fixed;left:12px;right:12px;bottom:16px;background:#222;color:#fff;padding:12px;border-radius:8px;z-index:30;display:none;text-align:center}
   .stat{display:flex;gap:10px}
   .stat div{flex:1;background:#fff;border-radius:8px;padding:8px;text-align:center}
@@ -120,17 +121,23 @@
   <div class="card">
     <div class="big">Lista de artigos</div>
     <p class="muted" id="ar-info">Nenhuma lista carregada.</p>
-    <label>Escolhe o ficheiro CSV (Google Sheets → Ficheiro → Transferir → Valores separados por vírgulas)</label>
-    <input type="file" id="ar-file" accept=".csv,.txt,text/csv,text/plain" style="margin:8px 0;width:100%">
-    <p class="muted">Colunas esperadas: Código de barras, Código artigo, Descrição do artigo, Preço 1 (por esta ordem ou com estes nomes).</p>
-    <button class="red" id="ar-del">Apagar lista</button>
+    <p class="muted">A lista atualiza-se sozinha sempre que abres a app com internet.</p>
+    <button class="pri" id="ar-upd" style="width:100%">🔄 Atualizar lista agora</button>
+    <details style="margin-top:16px">
+      <summary class="muted">Avançado: carregar um ficheiro CSV manualmente</summary>
+      <label>Ficheiro CSV (Google Sheets → Ficheiro → Transferir → Valores separados por vírgulas)</label>
+      <input type="file" id="ar-file" accept=".csv,.txt,text/csv,text/plain" style="margin:8px 0;width:100%">
+      <p class="muted">Se carregares um ficheiro à mão, a próxima atualização automática volta a usar a lista oficial.</p>
+      <button class="red" id="ar-del">Apagar lista deste telemóvel</button>
+    </details>
   </div>
 </section>
 
-<div id="cam"><video id="cam-v" playsinline muted></video><div class="mira"></div><button id="cam-x">Cancelar</button></div>
+<div id="cam"><video id="cam-v" playsinline muted></video><div class="mira"></div><button id="cam-t" hidden>🔦</button><button id="cam-x">Cancelar</button></div>
 <div id="toast"></div>
 <div class="loading" id="loading">A carregar artigos...</div>
 
+<script src="config.js"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -276,11 +283,24 @@ function lerCodigo() {
       v.srcObject = null; ov.classList.remove('on'); resolve(val);
     };
     $('#cam-x').onclick = () => fim(null);
+    const tb = $('#cam-t'); tb.hidden = true; tb.style.background = '#fff'; let tOn = false;
     try {
       camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
     } catch (e) { toast('Sem acesso à câmara: ' + e.message, 4000); return resolve(null); }
     v.srcObject = camStream; try { await v.play(); } catch (e) { }
     ov.classList.add('on');
+    try {
+      const trk = camStream.getVideoTracks()[0];
+      const caps = trk.getCapabilities ? trk.getCapabilities() : {};
+      if (caps.torch) {
+        tb.hidden = false;
+        tb.onclick = async () => {
+          tOn = !tOn;
+          try { await trk.applyConstraints({ advanced: [{ torch: tOn }] }); tb.style.background = tOn ? '#ffd54a' : '#fff'; }
+          catch (e) { tOn = !tOn; toast('Este telemóvel não deixa ligar a lanterna aqui.', 3500); }
+        };
+      }
+    } catch (e) { }
     let fm;
     try { const sup = await BarcodeDetector.getSupportedFormats(); fm = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'code_128', 'code_39', 'code_93', 'codabar', 'qr_code', 'data_matrix'].filter(f => sup.includes(f)); } catch (e) { }
     const det = fm && fm.length ? new BarcodeDetector({ formats: fm }) : new BarcodeDetector();
@@ -458,7 +478,7 @@ $('#ar-file').addEventListener('change', async e => {
     if (!novos.length) { toast('Não encontrei artigos neste ficheiro.', 4000); }
     else {
       artigos = novos; indexar();
-      await kvSet('artigos', artigos); await kvSet('artigosData', Date.now());
+      await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvDel('listaHash');
       infoArtigos(Date.now()); toast('✔ ' + artigos.length + ' artigos carregados.');
     }
   } catch (err) { toast('Erro a ler o ficheiro: ' + err.message, 5000); }
@@ -467,6 +487,39 @@ $('#ar-file').addEventListener('change', async e => {
 $('#ar-del').addEventListener('click', async () => {
   if (!confirm('Apagar a lista de artigos deste telemóvel? As leituras do inventário não são apagadas.')) return;
   artigos = []; indexar(); await kvDel('artigos'); await kvDel('artigosData'); infoArtigos();
+});
+
+/* ---------- atualização automática da lista ---------- */
+function hashTexto(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + '-' + s.length; }
+async function atualizarLista(manual) {
+  if (typeof LISTA_URL === 'undefined' || !LISTA_URL) return false;
+  try {
+    const r = await fetch(LISTA_URL, { cache: 'no-cache' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const txt = await r.text();
+    const h = hashTexto(txt);
+    if (artigos.length && h === (await kvGet('listaHash'))) {
+      await kvSet('artigosData', Date.now()); infoArtigos(Date.now());
+      if (manual) toast('A lista já está atualizada.');
+      return true;
+    }
+    const novos = construirArtigos(parseCSV(txt));
+    if (!novos.length) throw new Error('lista vazia');
+    artigos = novos; indexar();
+    await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvSet('listaHash', h);
+    infoArtigos(Date.now());
+    toast('✔ Lista atualizada: ' + artigos.length.toLocaleString('pt-PT') + ' artigos');
+    return true;
+  } catch (e) {
+    if (manual || !artigos.length) toast('Não consegui atualizar a lista (' + e.message + '). ' + (artigos.length ? 'Continua a usar a última lista guardada.' : 'Liga-te à internet e tenta outra vez.'), 5000);
+    return false;
+  }
+}
+$('#ar-upd').addEventListener('click', async () => {
+  $('#loading').style.display = 'flex';
+  await new Promise(r => setTimeout(r, 50));
+  await atualizarLista(true);
+  $('#loading').style.display = 'none';
 });
 
 /* ---------- arranque ---------- */
@@ -479,7 +532,14 @@ $('#ar-del').addEventListener('click', async () => {
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => { });
   }
-  if (!artigos.length) irPara('art');
+  if (!artigos.length) {
+    $('#loading').style.display = 'flex';
+    await atualizarLista(false);
+    $('#loading').style.display = 'none';
+    if (!artigos.length) irPara('art');
+  } else {
+    atualizarLista(false);   // atualiza em segundo plano; se estiver offline, usa a lista guardada
+  }
 })();
 </script>
 </body>
