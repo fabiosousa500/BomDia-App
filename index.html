@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f4e78">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>Preços e Inventário</title>
+<style>
+  :root{--az:#1f4e78;--az2:#dde9f5;--cz:#666;--ok:#2e7d32;--er:#c62828;--am:#fff4d6}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Arial,sans-serif;font-size:16px;background:#f3f5f8;color:#1b1b1b;padding-bottom:80px}
+  header{background:var(--az);color:#fff;padding:10px 14px;position:sticky;top:0;z-index:5}
+  header h1{margin:0;font-size:18px}
+  header small{opacity:.85}
+  nav{display:flex;background:#fff;border-bottom:1px solid #ccd;position:sticky;top:50px;z-index:4}
+  nav button{flex:1;padding:12px 4px;border:0;background:none;font-size:15px;color:var(--cz);border-bottom:3px solid transparent}
+  nav button.on{color:var(--az);border-bottom-color:var(--az);font-weight:bold}
+  section{display:none;padding:12px}
+  section.on{display:block}
+  input[type=text],input[type=search],select{width:100%;font-size:18px;padding:12px;border:1px solid #bbb;border-radius:8px;background:#fff;margin:4px 0 8px}
+  label{font-size:13px;color:var(--cz)}
+  button{font-size:16px;border:0;border-radius:8px;padding:12px 14px;cursor:pointer}
+  button.pri{background:var(--az);color:#fff}
+  button.sec{background:#e3e7ee;color:#222}
+  button.red{background:#fde7e7;color:var(--er)}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row>*{flex:1}
+  .card{background:#fff;border-radius:10px;padding:14px;margin:10px 0;box-shadow:0 1px 3px #0002}
+  .big{font-size:22px;font-weight:bold}
+  .preco{font-size:42px;font-weight:bold;color:var(--az);margin:6px 0}
+  .muted{color:var(--cz);font-size:14px}
+  .warn{background:var(--am);padding:8px;border-radius:6px;margin:8px 0;font-size:15px}
+  .bad{background:#fde7e7;color:var(--er);padding:8px;border-radius:6px;font-weight:bold;margin:8px 0}
+  .item{background:#fff;border-bottom:1px solid #e3e3e3;padding:10px 12px;display:flex;gap:10px;align-items:center}
+  .item .t{flex:1;min-width:0}
+  .item .t b{display:block;overflow:hidden;text-overflow:ellipsis}
+  .item .q{font-size:20px;font-weight:bold;color:var(--az);min-width:48px;text-align:right}
+  .item.click{cursor:pointer}
+  .chk{display:flex;gap:8px;align-items:center;font-size:15px;color:#222;margin:8px 0}
+  .chk input{width:22px;height:22px}
+  #cam{position:fixed;inset:0;background:#000;z-index:20;display:none;flex-direction:column}
+  #cam.on{display:flex}
+  #cam video{flex:1;width:100%;object-fit:cover}
+  #cam .mira{position:absolute;left:10%;right:10%;top:35%;height:22%;border:3px solid #4cf;border-radius:10px;box-shadow:0 0 0 999px #0005;pointer-events:none}
+  #cam button{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);background:#fff;color:#000;padding:14px 28px}
+  #toast{position:fixed;left:12px;right:12px;bottom:16px;background:#222;color:#fff;padding:12px;border-radius:8px;z-index:30;display:none;text-align:center}
+  .stat{display:flex;gap:10px}
+  .stat div{flex:1;background:#fff;border-radius:8px;padding:8px;text-align:center}
+  .stat b{display:block;font-size:20px;color:var(--az)}
+  .loading{position:fixed;inset:0;background:#fffc;z-index:40;display:none;align-items:center;justify-content:center;font-size:18px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><h1>Preços e Inventário</h1><small id="hd-info">sem artigos carregados</small></header>
+<nav id="tabs">
+  <button data-t="precos" class="on">💶 Preços</button>
+  <button data-t="inv">📦 Inventário</button>
+  <button data-t="leit">📋 Leituras</button>
+  <button data-t="art">⚙️ Artigos</button>
+</nav>
+
+<!-- ============ PREÇOS ============ -->
+<section id="precos" class="on">
+  <button class="pri" id="pc-cam" style="width:100%;font-size:20px;padding:16px">📷 Ler código com a câmara</button>
+  <input type="search" id="pc-in" placeholder="Código ou parte do nome" autocomplete="off" autocapitalize="off" style="margin-top:12px">
+  <select id="pc-modo">
+    <option value="contem">Contém (todas as palavras)</option>
+    <option value="comeca">Começa por</option>
+    <option value="termina">Termina em</option>
+    <option value="igual">Igual a</option>
+  </select>
+  <div id="pc-card"></div>
+  <div id="pc-res"></div>
+</section>
+
+<!-- ============ INVENTÁRIO ============ -->
+<section id="inv">
+  <label>Código de armazém (igual em todo o inventário)</label>
+  <input type="text" id="iv-arm" placeholder="ex: 01" autocomplete="off">
+  <div class="row">
+    <button class="pri" id="iv-cam" style="font-size:20px;padding:16px">📷 Ler código</button>
+  </div>
+  <input type="search" id="iv-in" placeholder="Ou escreve / bipa o código e Enter" autocomplete="off" autocapitalize="off" style="margin-top:12px">
+  <label class="chk"><input type="checkbox" id="iv-cont" checked> Abrir a câmara sozinha depois de guardar</label>
+
+  <div id="iv-panel" class="card" hidden>
+    <div id="iv-desc" class="big"></div>
+    <div id="iv-cod" class="muted"></div>
+    <div id="iv-exist" class="warn" hidden></div>
+    <label class="chk"><input type="checkbox" id="iv-usar"> Usar o código lido em vez do convertido</label>
+    <label>Quantidade</label>
+    <input type="text" id="iv-qtd" inputmode="decimal" autocomplete="off" placeholder="0">
+    <div class="row">
+      <button class="pri" id="iv-save">Guardar</button>
+      <button class="sec" id="iv-add" hidden>+ Somar</button>
+      <button class="sec" id="iv-cancel">Cancelar</button>
+    </div>
+  </div>
+  <div class="stat" style="margin-top:10px">
+    <div><b id="st-n">0</b>códigos</div><div><b id="st-q">0</b>unidades</div>
+  </div>
+</section>
+
+<!-- ============ LEITURAS ============ -->
+<section id="leit">
+  <div class="row">
+    <button class="pri" id="ex-share">📤 Enviar .plt</button>
+    <button class="sec" id="ex-down">⬇️ Transferir .plt</button>
+  </div>
+  <input type="search" id="lt-f" placeholder="Filtrar leituras" autocomplete="off" style="margin-top:10px">
+  <div id="lt-list"></div>
+  <button class="red" id="lt-clear" style="width:100%;margin-top:14px">Apagar todas as leituras</button>
+</section>
+
+<!-- ============ ARTIGOS ============ -->
+<section id="art">
+  <div class="card">
+    <div class="big">Lista de artigos</div>
+    <p class="muted" id="ar-info">Nenhuma lista carregada.</p>
+    <label>Escolhe o ficheiro CSV (Google Sheets → Ficheiro → Transferir → Valores separados por vírgulas)</label>
+    <input type="file" id="ar-file" accept=".csv,.txt,text/csv,text/plain" style="margin:8px 0;width:100%">
+    <p class="muted">Colunas esperadas: Código de barras, Código artigo, Descrição do artigo, Preço 1 (por esta ordem ou com estes nomes).</p>
+    <button class="red" id="ar-del">Apagar lista</button>
+  </div>
+</section>
+
+<div id="cam"><video id="cam-v" playsinline muted></video><div class="mira"></div><button id="cam-x">Cancelar</button></div>
+<div id="toast"></div>
+<div class="loading" id="loading">A carregar artigos...</div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+/* ---------- armazenamento (IndexedDB) ---------- */
+let _db;
+function db() {
+  if (_db) return Promise.resolve(_db);
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('leitor', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => { _db = r.result; res(_db); };
+    r.onerror = () => rej(r.error);
+  });
+}
+async function kvGet(k) {
+  const d = await db();
+  return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+}
+async function kvSet(k, v) {
+  const d = await db();
+  return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+}
+async function kvDel(k) {
+  const d = await db();
+  return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').delete(k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+}
+
+function toast(t, ms) {
+  const e = $('#toast'); e.textContent = t; e.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(() => e.style.display = 'none', ms || 2800);
+}
+
+/* ---------- CSV ---------- */
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const first = text.split(/\r?\n/, 1)[0];
+  let d = ',', best = -1;
+  for (const x of [';', ',', '\t']) { const c = first.split(x).length; if (c > best) { best = c; d = x; } }
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === d) { row.push(cur); cur = ''; }
+    else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+    else if (ch === '\r') { }
+    else cur += ch;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+
+/* ---------- artigos ---------- */
+let artigos = [], idxBar = new Map(), idxCod = new Map(), idxBar0 = new Map(), idxCod0 = new Map();
+const strip0 = s => s.replace(/^0+/, '');
+
+function construirArtigos(rows) {
+  if (!rows.length) return [];
+  const h = rows[0].map(norm);
+  const find = (fn, def) => { const i = h.findIndex(fn); return i >= 0 ? i : def; };
+  const cBar = find(x => x.includes('barras'), 0);
+  const cCod = find(x => x.includes('artigo') && x.includes('cod'), 1);
+  const cDes = find(x => x.includes('descri'), 2);
+  const cPre = find(x => x.startsWith('preco'), 3);
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const desc = (r[cDes] || '').trim();
+    const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
+    if (!desc && !bar && !cod) continue;
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), n: norm(desc) });
+  }
+  return out;
+}
+function indexar() {
+  idxBar = new Map(); idxCod = new Map(); idxBar0 = new Map(); idxCod0 = new Map();
+  artigos.forEach((a, i) => {
+    if (a.bar) { if (!idxBar.has(a.bar)) idxBar.set(a.bar, i); const s = strip0(a.bar); if (s && !idxBar0.has(s)) idxBar0.set(s, i); }
+    if (a.cod) { if (!idxCod.has(a.cod)) idxCod.set(a.cod, i); const s = strip0(a.cod); if (s && !idxCod0.has(s)) idxCod0.set(s, i); }
+  });
+  $('#hd-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados';
+}
+function lookup(c) {
+  if (!c) return null;
+  let i = idxBar.get(c);
+  if (i == null) i = idxCod.get(c);
+  if (i == null) { const s = strip0(c); if (s) { i = idxBar0.get(s); if (i == null) i = idxCod0.get(s); } }
+  return i == null ? null : artigos[i];
+}
+function fmtPreco(p) {
+  let s = String(p).replace(/[\s€]/g, '');
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? String(p) : n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+function pesquisarNome(txt, modo, limite) {
+  const t = norm(txt); if (t.length < 2) return [];
+  const pal = t.split(/\s+/);
+  const out = [];
+  for (const a of artigos) {
+    let ok = false;
+    if (modo === 'contem') ok = pal.every(p => a.n.includes(p));
+    else if (modo === 'comeca') ok = a.n.startsWith(t);
+    else if (modo === 'termina') ok = a.n.endsWith(t);
+    else ok = a.n === t;
+    if (ok) { out.push(a); if (out.length >= limite) break; }
+  }
+  return out;
+}
+
+/* ---------- conversão ITF-14 / GS1-128 -> EAN-13 ---------- */
+function limpar(raw) { return String(raw == null ? '' : raw).replace(/^\][A-Za-z]\d/, '').replace(/[\x00-\x1f\x7f]/g, '').trim(); }
+function checkDigit(b12) { let s = 0; for (let i = 0; i < 12; i++) s += (+b12[i]) * (i % 2 ? 3 : 1); return (10 - s % 10) % 10; }
+function converter(l) {
+  let base = null;
+  if (l.length === 13) return l;
+  if (l.startsWith('(01)')) base = l.substr(5, 12);
+  else if (l.startsWith('01') && l.length >= 16) base = l.substr(3, 12);
+  else if (l.length === 14 && /^\d+$/.test(l)) base = l.substr(1, 12);
+  if (base && /^\d{12}$/.test(base)) return base + checkDigit(base);
+  return l;
+}
+function resolver(lido, usar) {
+  if (usar) return lido;
+  const conv = converter(lido);
+  let a = lookup(conv); if (a) return a.bar || conv;
+  a = lookup(lido); if (a) return a.bar || lido;
+  return conv;
+}
+
+/* ---------- câmara ---------- */
+let camStream = null, camTimer = null;
+function lerCodigo() {
+  return new Promise(async resolve => {
+    if (!('BarcodeDetector' in window)) { toast('Este navegador não lê códigos com a câmara. Escreve o código.', 4000); return resolve(null); }
+    const ov = $('#cam'), v = $('#cam-v');
+    const fim = val => {
+      clearInterval(camTimer);
+      if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+      v.srcObject = null; ov.classList.remove('on'); resolve(val);
+    };
+    $('#cam-x').onclick = () => fim(null);
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    } catch (e) { toast('Sem acesso à câmara: ' + e.message, 4000); return resolve(null); }
+    v.srcObject = camStream; try { await v.play(); } catch (e) { }
+    ov.classList.add('on');
+    let fm;
+    try { const sup = await BarcodeDetector.getSupportedFormats(); fm = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'code_128', 'code_39', 'code_93', 'codabar', 'qr_code', 'data_matrix'].filter(f => sup.includes(f)); } catch (e) { }
+    const det = fm && fm.length ? new BarcodeDetector({ formats: fm }) : new BarcodeDetector();
+    let busy = false;
+    camTimer = setInterval(async () => {
+      if (busy || v.readyState < 2) return; busy = true;
+      try { const r = await det.detect(v); if (r.length) { if (navigator.vibrate) navigator.vibrate(60); fim(r[0].rawValue); } } catch (e) { }
+      busy = false;
+    }, 150);
+  });
+}
+
+/* ---------- separadores ---------- */
+function irPara(t) {
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === t));
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (t === 'leit') renderLeituras();
+  window.scrollTo(0, 0);
+}
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) irPara(b.dataset.t); });
+
+/* ---------- PREÇOS ---------- */
+function mostrarCartao(a, codigo) {
+  $('#pc-res').innerHTML = '';
+  $('#pc-card').innerHTML = '<div class="card"><div class="big">' + esc(a.desc) + '</div><div class="preco">' + esc(fmtPreco(a.preco)) + '</div>' +
+    '<div class="muted">Cód. artigo: ' + esc(a.cod || '-') + '<br>Cód. barras: ' + esc(a.bar || '-') + '</div></div>';
+}
+function pcBuscar(txt) {
+  const t = limpar(txt);
+  $('#pc-card').innerHTML = ''; $('#pc-res').innerHTML = '';
+  if (!t) return;
+  let a = lookup(t) || lookup(converter(t));
+  if (a) return mostrarCartao(a);
+  const res = pesquisarNome(t, $('#pc-modo').value, 100);
+  if (!res.length) { if (t.length >= 2) $('#pc-res').innerHTML = '<div class="bad">Não encontrado: ' + esc(t) + '</div>'; return; }
+  $('#pc-res').innerHTML = '<div class="muted" style="margin:6px 0">' + res.length + (res.length >= 100 ? '+' : '') + ' resultado(s)</div>' +
+    res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc(r.cod || r.bar) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
+  pcBuscar._res = res;
+}
+$('#pc-res').addEventListener('click', e => { const it = e.target.closest('.item'); if (it && pcBuscar._res) mostrarCartao(pcBuscar._res[+it.dataset.i]); });
+$('#pc-in').addEventListener('input', e => pcBuscar(e.target.value));
+$('#pc-modo').addEventListener('change', () => pcBuscar($('#pc-in').value));
+$('#pc-cam').addEventListener('click', async () => {
+  const raw = await lerCodigo();
+  if (raw) { $('#pc-in').value = limpar(raw); pcBuscar(raw); }
+});
+
+/* ---------- INVENTÁRIO ---------- */
+let leit = [];      // {lido, usar, final, desc, qtd, t}
+let cur = null;     // leitura em edição
+const salvarLeit = () => kvSet('leit', leit);
+const fmtQ = n => String(Math.round(n * 1000) / 1000).replace('.', ',');
+
+function resumo() {
+  const finais = new Map();
+  leit.forEach(l => finais.set(l.final, (finais.get(l.final) || 0) + l.qtd));
+  $('#st-n').textContent = finais.size.toLocaleString('pt-PT');
+  let s = 0; finais.forEach(v => s += v);
+  $('#st-q').textContent = fmtQ(s);
+}
+function atualizarPainel(manterQtd) {
+  const fin = resolver(cur.lido, cur.usar);
+  const a = lookup(fin);
+  cur.final = fin; cur.desc = a ? a.desc : '';
+  $('#iv-desc').innerHTML = a ? esc(a.desc) : '<span style="color:var(--er)">ARTIGO FORA DA LISTA</span>';
+  $('#iv-cod').innerHTML = 'Código guardado: <b>' + esc(fin) + '</b>' + (fin !== cur.lido ? ' (lido: ' + esc(cur.lido) + ')' : '');
+  const ex = cur.ex;
+  $('#iv-exist').hidden = !ex;
+  if (ex) $('#iv-exist').textContent = 'Já lido antes: quantidade ' + fmtQ(ex.qtd);
+  $('#iv-add').hidden = !ex;
+  $('#iv-usar').checked = cur.usar;
+  if (!manterQtd) $('#iv-qtd').value = ex ? fmtQ(ex.qtd) : '';
+}
+function ivAbrir(raw, entry) {
+  const lido = limpar(raw); if (!lido) return;
+  irPara('inv');
+  const fin0 = resolver(lido, false);
+  const ex = entry || leit.find(l => l.lido === lido) || leit.find(l => l.final === fin0) || null;
+  cur = { lido, usar: ex && ex.lido === lido ? ex.usar : false, ex };
+  $('#iv-panel').hidden = false;
+  atualizarPainel(false);
+  const q = $('#iv-qtd'); q.focus(); q.select();
+}
+function ivFechar() { $('#iv-panel').hidden = true; cur = null; $('#iv-in').value = ''; }
+async function ivGuardar(somar) {
+  if (!cur) return;
+  const txt = $('#iv-qtd').value.trim().replace(',', '.');
+  const q = parseFloat(txt);
+  if (isNaN(q) || q < 0) { toast('Escreve uma quantidade válida.'); return; }
+  const qtd = somar && cur.ex ? cur.ex.qtd + q : q;
+  leit = leit.filter(l => l.lido !== cur.lido && l.final !== cur.final && l !== cur.ex);
+  leit.push({ lido: cur.lido, usar: cur.usar, final: cur.final, desc: cur.desc, qtd, t: Date.now() });
+  const nome = cur.desc || cur.final;
+  ivFechar(); resumo();
+  toast('✔ ' + nome + ': ' + fmtQ(qtd));
+  const gravar = salvarLeit();
+  if ($('#iv-cont').checked) ivCamera(); else $('#iv-in').focus();
+  await gravar;
+}
+async function ivCamera() { const raw = await lerCodigo(); if (raw) ivAbrir(raw); }
+$('#iv-cam').addEventListener('click', ivCamera);
+$('#iv-in').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivAbrir(e.target.value); } });
+$('#iv-usar').addEventListener('change', e => { if (cur) { cur.usar = e.target.checked; atualizarPainel(true); } });
+$('#iv-save').addEventListener('click', () => ivGuardar(false));
+$('#iv-add').addEventListener('click', () => ivGuardar(true));
+$('#iv-cancel').addEventListener('click', ivFechar);
+$('#iv-qtd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivGuardar(false); } });
+$('#iv-arm').addEventListener('input', e => kvSet('arm', e.target.value.trim()));
+
+/* ---------- LEITURAS e exportação ---------- */
+function renderLeituras() {
+  const f = norm($('#lt-f').value);
+  const lista = leit.slice().sort((a, b) => b.t - a.t).filter(l => !f || norm(l.desc + ' ' + l.final + ' ' + l.lido).includes(f));
+  $('#lt-list').innerHTML = lista.length ? lista.slice(0, 500).map(l =>
+    '<div class="item click" data-l="' + esc(l.lido) + '"><div class="t"><b>' + (l.desc ? esc(l.desc) : '<span style="color:var(--er)">FORA DA LISTA</span>') + '</b><span class="muted">' + esc(l.final) + '</span></div>' +
+    '<div class="q">' + fmtQ(l.qtd) + '</div><button class="red" data-del="' + esc(l.lido) + '">✕</button></div>').join('') +
+    (lista.length > 500 ? '<div class="muted" style="padding:8px">A mostrar 500 de ' + lista.length + '. Usa o filtro.</div>' : '')
+    : '<div class="muted" style="padding:12px">Sem leituras.</div>';
+}
+$('#lt-f').addEventListener('input', renderLeituras);
+$('#lt-list').addEventListener('click', async e => {
+  const del = e.target.closest('[data-del]');
+  if (del) { e.stopPropagation(); leit = leit.filter(l => l.lido !== del.dataset.del); await salvarLeit(); resumo(); renderLeituras(); return; }
+  const it = e.target.closest('.item'); if (it) ivAbrir(it.dataset.l, leit.find(l => l.lido === it.dataset.l));
+});
+$('#lt-clear').addEventListener('click', async () => {
+  if (!leit.length) return;
+  if (!confirm('Apagar TODAS as ' + leit.length + ' leituras? Esta ação não se desfaz.')) return;
+  leit = []; await salvarLeit(); resumo(); renderLeituras();
+});
+
+function construirPlt(arm) {
+  const m = new Map();
+  leit.forEach(l => m.set(l.final, (m.get(l.final) || 0) + l.qtd));
+  const linhas = [];
+  m.forEach((q, cod) => linhas.push(cod + '|' + arm + '|||' + String(Math.round(q * 1000) / 1000)));
+  return linhas.length ? linhas.join('\r\n') + '\r\n' : '';
+}
+function nomePlt(arm) {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return 'inventario_' + arm.replace(/[^\w-]/g, '') + '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.plt';
+}
+function prepararExport() {
+  const arm = $('#iv-arm').value.trim();
+  if (!arm) { irPara('inv'); $('#iv-arm').focus(); toast('Escreve primeiro o código de armazém.', 3500); return null; }
+  if (!leit.length) { toast('Não há leituras para exportar.'); return null; }
+  return { texto: construirPlt(arm), nome: nomePlt(arm) };
+}
+function transferir(texto, nome) {
+  const url = URL.createObjectURL(new Blob([texto], { type: 'text/plain' }));
+  const a = document.createElement('a'); a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+$('#ex-down').addEventListener('click', () => { const x = prepararExport(); if (x) transferir(x.texto, x.nome); });
+$('#ex-share').addEventListener('click', async () => {
+  const x = prepararExport(); if (!x) return;
+  const file = new File([x.texto], x.nome, { type: 'text/plain' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: x.nome, text: 'Inventário ' + x.nome });
+    else { transferir(x.texto, x.nome); toast('Partilha não disponível: o ficheiro foi transferido.', 4000); }
+  } catch (e) { if (e.name !== 'AbortError') { transferir(x.texto, x.nome); toast('Não foi possível partilhar: o ficheiro foi transferido.', 4000); } }
+});
+
+/* ---------- ARTIGOS (carregar CSV) ---------- */
+function infoArtigos(data) {
+  $('#ar-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos carregados' + (data ? ' em ' + new Date(data).toLocaleString('pt-PT') : '') + '.' : 'Nenhuma lista carregada.';
+}
+$('#ar-file').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  $('#loading').style.display = 'flex';
+  await new Promise(r => setTimeout(r, 50));
+  try {
+    const rows = parseCSV(await f.text());
+    const novos = construirArtigos(rows);
+    if (!novos.length) { toast('Não encontrei artigos neste ficheiro.', 4000); }
+    else {
+      artigos = novos; indexar();
+      await kvSet('artigos', artigos); await kvSet('artigosData', Date.now());
+      infoArtigos(Date.now()); toast('✔ ' + artigos.length + ' artigos carregados.');
+    }
+  } catch (err) { toast('Erro a ler o ficheiro: ' + err.message, 5000); }
+  $('#loading').style.display = 'none'; e.target.value = '';
+});
+$('#ar-del').addEventListener('click', async () => {
+  if (!confirm('Apagar a lista de artigos deste telemóvel? As leituras do inventário não são apagadas.')) return;
+  artigos = []; indexar(); await kvDel('artigos'); await kvDel('artigosData'); infoArtigos();
+});
+
+/* ---------- arranque ---------- */
+(async function init() {
+  try {
+    artigos = (await kvGet('artigos')) || []; indexar(); infoArtigos(await kvGet('artigosData'));
+    leit = (await kvGet('leit')) || []; resumo();
+    $('#iv-arm').value = (await kvGet('arm')) || '';
+  } catch (e) { toast('Aviso: armazenamento local indisponível (' + e.message + ')', 5000); }
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('sw.js').catch(() => { });
+  }
+  if (!artigos.length) irPara('art');
+})();
+</script>
+</body>
+</html>
