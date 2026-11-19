@@ -164,6 +164,7 @@
       <button class="sec" id="cfg-save">Guardar</button>
     </details>
   </div>
+  <div class="muted" id="ver" style="margin:18px 0 8px;text-align:center"></div>
 </section>
 
 <div id="cam"><video id="cam-v" playsinline muted></video><div class="mira"></div><button id="cam-t" hidden>🔦</button><button id="cam-x">Cancelar</button></div>
@@ -261,6 +262,7 @@ function lookup(c) {
   if (!c) return null;
   let i = idxBar.get(c);
   if (i == null) i = idxCod.get(c);
+  if (i == null) { i = idxBar.get(c.toUpperCase()); if (i == null) i = idxCod.get(c.toUpperCase()); if (i == null) i = idxCod.get(c.toLowerCase()); }
   if (i == null) { const s = strip0(c); if (s) { i = idxBar0.get(s); if (i == null) i = idxCod0.get(s); } }
   return i == null ? null : artigos[i];
 }
@@ -282,7 +284,7 @@ function pesquisarNome(txt, modo, limite) {
     else if (modo === 'termina') ok = a.n.endsWith(t);
     else ok = a.n === t;
     if (ok) nomes.push(a);
-    if (/[0-9]/.test(t)) {   // o texto parece (parte de) um código
+    if (!/\s/.test(t) || /[0-9]/.test(t)) {   // o texto pode ser (parte de) um código
       const tc = t.replace(/\s+/g, '');
       if (a.b.startsWith(tc) || a.c.startsWith(tc)) iniciam.push(a);
       else if (a.b.includes(tc) || a.c.includes(tc)) contem.push(a);
@@ -318,6 +320,8 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
+const VERSAO = 'v10';
+document.addEventListener('DOMContentLoaded', () => { const v = document.getElementById('ver'); if (v) v.textContent = 'Versão da app: ' + VERSAO; });
 const GS = '\x1d';
 const AI_FIXOS = { '00': 18, '01': 14, '02': 14, '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6, '20': 2 };
 const AI_VAR = { '10': 20, '21': 20, '30': 8, '37': 8, '240': 30, '241': 30, '250': 30, '251': 30 };
@@ -595,11 +599,12 @@ function ivSugestoes(txt) {
   const box = $('#iv-res'), t = limpar(txt);
   ivSugestoes._res = [];
   const numerico = /^[\d\s-]+$/.test(t);
-  if (t.length < (numerico ? 1 : 3)) { box.innerHTML = ''; return; }
-  const res = numerico && t.replace(/\s+/g, '').length < 2 ? [] : pesquisarNome(t, 'contem', 30);   // 1 dígito: só a opção de usar o código escrito
+  if (t.length < 1) { box.innerHTML = ''; return; }
+  const res = t.replace(/\s+/g, '').length < (numerico ? 2 : 3) ? [] : pesquisarNome(t, 'contem', 30);   // 1 dígito: só a opção de usar o código escrito
   ivSugestoes._res = res;
   let h = res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
-  if (numerico) h += '<div class="item click" data-manual="1"><div class="t"><b>➕ Usar o código escrito: ' + esc(t.replace(/\s+/g, '')) + '</b><span class="muted">para códigos que não estão na lista ou que a câmara não lê</span></div></div>';
+  const manual = '<div class="item click" data-manual="1"><div class="t"><b>➕ Usar o código escrito: ' + esc(t.replace(/\s+/g, '')) + '</b><span class="muted">para códigos que não estão na lista ou que a câmara não lê</span></div></div>';
+  h = manual + h;
   box.innerHTML = h;
 }
 $('#iv-in').addEventListener('input', e => ivSugestoes(e.target.value));
@@ -618,8 +623,9 @@ $('#iv-in').addEventListener('keydown', e => {
     if (lookup(c) || lookup(converter(c)) || !n) ivAbrir(c);          // código completo (ou fora da lista): entra logo
     else if (n === 1 && c.length < 8) ivAbrir(ivSugestoes._res[0].bar || ivSugestoes._res[0].cod);
     else toast('Escolhe o artigo na lista, ou toca em «Usar o código escrito».', 3500);
-  } else if (n === 1) ivAbrir(ivSugestoes._res[0].bar || ivSugestoes._res[0].cod);
-  else if (n > 1) toast('Escolhe o artigo na lista.');
+  } else if (lookup(t) || lookup(converter(t))) ivAbrir(t);
+  else if (n === 1) ivAbrir(ivSugestoes._res[0].bar || ivSugestoes._res[0].cod);
+  else if (n > 1) toast('Escolhe o artigo na lista, ou toca em «Usar o código escrito».', 3500);
   else if (t) ivAbrir(t);
 });
 $('#iv-usar').addEventListener('change', e => { if (cur) { cur.usar = e.target.checked; atualizarPainel(true); } });
