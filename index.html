@@ -53,6 +53,12 @@
   .stat b{display:block;font-size:20px;color:var(--az)}
   .loading{position:fixed;inset:0;background:#fffc;z-index:40;display:none;align-items:center;justify-content:center;font-size:18px}
   [hidden]{display:none!important}
+  #dlg{position:fixed;inset:0;background:#000a;z-index:60;display:none;align-items:center;justify-content:center;padding:20px}
+  #dlg.on{display:flex}
+  #dlg .box{background:#fff;border-radius:14px;padding:18px;width:100%;max-width:420px;border-top:6px solid var(--ye)}
+  #dlg h3{margin:0 0 8px;font-size:17px}
+  #dlg p{margin:0 0 10px;font-size:16px;white-space:pre-wrap}
+  #dlg .row{margin-top:8px}
 </style>
 </head>
 <body>
@@ -407,6 +413,20 @@ function lerCodigo() {
   });
 }
 
+/* ---------- janelas da app (em vez das caixas do navegador) ---------- */
+// dlg(texto) -> true/false ; dlg(texto, valorInicial) -> texto escrito ou null
+function dlg(msg, valor) {
+  return new Promise(res => {
+    const d = $('#dlg'), i = $('#dlg-i'), pedir = valor !== undefined;
+    $('#dlg-m').textContent = msg; i.hidden = !pedir; i.value = pedir ? valor : '';
+    d.classList.add('on'); if (pedir) { i.focus(); i.select(); } else $('#dlg-ok').focus();
+    const fim = r => { d.classList.remove('on'); $('#dlg-ok').onclick = $('#dlg-c').onclick = i.onkeydown = null; res(r); };
+    $('#dlg-ok').onclick = () => fim(pedir ? i.value : true);
+    $('#dlg-c').onclick = () => fim(pedir ? null : false);
+    i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); fim(i.value); } };
+  });
+}
+
 /* ---------- separadores ---------- */
 function irPara(t) {
   document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === t));
@@ -470,7 +490,7 @@ function abrirDoc(id) {
 function marcarExportado() { const d = docAtual(); if (d) { d.exp = Date.now(); salvarLeit(); renderDocs(); } }
 $('#dc-sel').addEventListener('change', e => abrirDoc(e.target.value));
 $('#dc-new').addEventListener('click', async () => {
-  const nome = prompt('Nome do novo documento (ex: Guia 1234 ou Inventário Loja):', '');
+  const nome = await dlg('Nome do novo documento (ex: Guia 1234 ou Inventário Loja):', '');
   if (nome === null) return;
   if (!nome.trim()) { toast('Escreve um nome para o documento.'); return; }
   await salvarLeit();
@@ -480,13 +500,13 @@ $('#dc-new').addEventListener('click', async () => {
 });
 $('#dc-ren').addEventListener('click', async () => {
   const d = docAtual(); if (!d) return;
-  const nome = prompt('Novo nome do documento:', d.nome);
+  const nome = await dlg('Novo nome do documento:', d.nome);
   if (nome === null || !nome.trim()) return;
   d.nome = nome.trim(); await kvSet('docs', docs); renderDocs();
 });
 $('#dc-del').addEventListener('click', async () => {
   const d = docAtual(); if (!d) return;
-  if (!confirm('Apagar o documento "' + d.nome + '" e as suas ' + d.leit.length + ' linhas? Esta ação não se desfaz.')) return;
+  if (!await dlg('Apagar o documento "' + d.nome + '" e as suas ' + d.leit.length + ' linhas? Esta ação não se desfaz.')) return;
   docs = docs.filter(x => x !== d);
   if (!docs.length) novoDoc('Inventário', '');
   await kvSet('docs', docs); abrirDoc(docs[0].id);
@@ -630,7 +650,7 @@ $('#lt-list').addEventListener('click', async e => {
 });
 $('#lt-clear').addEventListener('click', async () => {
   if (!leit.length) return;
-  if (!confirm('Apagar TODAS as ' + leit.length + ' leituras? Esta ação não se desfaz.')) return;
+  if (!await dlg('Apagar TODAS as ' + leit.length + ' leituras? Esta ação não se desfaz.')) return;
   leit = []; await salvarLeit(); resumo(); renderLeituras();
 });
 
@@ -687,7 +707,7 @@ $('#ex-mail').addEventListener('click', async () => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(para)) { toast('Escreve um endereço de email válido.', 3500); $('#ex-email').focus(); return; }
   const cfg = envioCfg();
   if (!cfg.url) { toast('O envio por email ainda não está configurado. Usa "Partilhar / meu email" ou Transferir.', 5000); return; }
-  if (!confirm('Enviar "' + x.doc + '" (' + x.linhas + ' linhas) para ' + para + '?')) return;
+  if (!await dlg('Enviar "' + x.doc + '" (' + x.linhas + ' linhas) para ' + para + '?')) return;
   kvSet('email', para);
   const b = $('#ex-mail'); b.disabled = true; toast('A enviar...', 15000);
   try {
@@ -737,7 +757,7 @@ $('#ar-file').addEventListener('change', async e => {
   $('#loading').style.display = 'none'; e.target.value = '';
 });
 $('#ar-del').addEventListener('click', async () => {
-  if (!confirm('Apagar a lista de artigos deste telemóvel? As leituras do inventário não são apagadas.')) return;
+  if (!await dlg('Apagar a lista de artigos deste telemóvel? As leituras do inventário não são apagadas.')) return;
   artigos = []; indexar(); await kvDel('artigos'); await kvDel('artigosData'); infoArtigos();
 });
 
@@ -804,5 +824,6 @@ $('#ar-upd').addEventListener('click', async () => {
   }
 })();
 </script>
+<div id="dlg"><div class="box"><h3>Bom Dia São Jorge</h3><p id="dlg-m"></p><input type="text" id="dlg-i" autocomplete="off"><div class="row"><button class="sec" id="dlg-c">Cancelar</button><button class="pri" id="dlg-ok">OK</button></div></div></div>
 </body>
 </html>
