@@ -595,8 +595,8 @@ function ivSugestoes(txt) {
   const box = $('#iv-res'), t = limpar(txt);
   ivSugestoes._res = [];
   const numerico = /^[\d\s-]+$/.test(t);
-  if (t.length < (numerico ? 3 : 3)) { box.innerHTML = ''; return; }
-  const res = pesquisarNome(t, 'contem', 30);
+  if (t.length < (numerico ? 1 : 3)) { box.innerHTML = ''; return; }
+  const res = numerico && t.replace(/\s+/g, '').length < 2 ? [] : pesquisarNome(t, 'contem', 30);   // 1 dígito: só a opção de usar o código escrito
   ivSugestoes._res = res;
   let h = res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
   if (numerico) h += '<div class="item click" data-manual="1"><div class="t"><b>➕ Usar o código escrito: ' + esc(t.replace(/\s+/g, '')) + '</b><span class="muted">para códigos que não estão na lista ou que a câmara não lê</span></div></div>';
