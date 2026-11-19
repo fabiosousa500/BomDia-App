@@ -94,13 +94,14 @@
   <div class="row">
     <button class="pri" id="iv-cam" style="font-size:20px;padding:16px">📷 Ler código</button>
   </div>
-  <input type="search" id="iv-in" placeholder="Código ou nome do artigo (Enter)" autocomplete="off" autocapitalize="off" style="margin-top:12px">
+  <input type="search" id="iv-in" placeholder="Nome, código de barras ou código artigo (Enter)" autocomplete="off" autocapitalize="off" style="margin-top:12px">
   <div id="iv-res"></div>
   <label class="chk"><input type="checkbox" id="iv-cont" checked> Abrir a câmara sozinha depois de guardar</label>
   <label class="chk" style="flex-wrap:wrap">Avisar validade com menos de <input type="text" id="iv-dias" inputmode="numeric" value="30" style="width:64px;height:auto;margin:0 8px;padding:8px;font-size:16px;text-align:center"> dias</label>
 
   <div id="iv-panel" class="card" hidden>
     <div id="iv-desc" class="big"></div>
+    <div id="iv-preco" class="preco" style="font-size:30px;margin:2px 0" hidden></div>
     <div id="iv-cod" class="muted"></div>
     <div id="iv-gs" hidden></div>
     <div id="iv-exist" class="warn" hidden></div>
@@ -521,6 +522,7 @@ function atualizarPainel(manterQtd) {
   const a = lookup(fin);
   cur.final = fin; cur.desc = a ? a.desc : '';
   $('#iv-desc').innerHTML = a ? esc(a.desc) : '<span style="color:var(--er)">ARTIGO FORA DA LISTA</span>';
+  const pv = $('#iv-preco'); pv.hidden = !(a && a.preco); if (a && a.preco) pv.textContent = 'Preço de venda: ' + fmtPreco(a.preco);
   $('#iv-cod').innerHTML = 'Código guardado: <b>' + esc(fin) + '</b>' + (fin !== cur.lido ? ' (lido: ' + esc(cur.lido.length > 40 ? cur.lido.slice(0, 40) + '…' : cur.lido) + ')' : '');
   // linhas já picadas deste artigo (várias linhas do mesmo código são permitidas)
   const rel = leit.filter(l => l.final === fin || l.lido === cur.lido);
@@ -572,23 +574,33 @@ $('#iv-cam').addEventListener('click', ivCamera);
 function ivSugestoes(txt) {
   const box = $('#iv-res'), t = limpar(txt);
   ivSugestoes._res = [];
-  if (!/[a-zA-Z]/.test(t) || t.length < 3 || lookup(t) || lookup(converter(t))) { box.innerHTML = ''; return; }
+  const numerico = /^[\d\s-]+$/.test(t);
+  if (t.length < (numerico ? 3 : 3)) { box.innerHTML = ''; return; }
   const res = pesquisarNome(t, 'contem', 30);
   ivSugestoes._res = res;
-  box.innerHTML = res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
+  let h = res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
+  if (numerico) h += '<div class="item click" data-manual="1"><div class="t"><b>➕ Usar o código escrito: ' + esc(t.replace(/\s+/g, '')) + '</b><span class="muted">para códigos que não estão na lista ou que a câmara não lê</span></div></div>';
+  box.innerHTML = h;
 }
 $('#iv-in').addEventListener('input', e => ivSugestoes(e.target.value));
 $('#iv-res').addEventListener('click', e => {
   const it = e.target.closest('.item'); if (!it) return;
+  if (it.dataset.manual) { ivAbrir($('#iv-in').value.replace(/\s+/g, '')); return; }
   const a = (ivSugestoes._res || [])[+it.dataset.i]; if (a) ivAbrir(a.bar || a.cod);
 });
 $('#iv-in').addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
-  const n = (ivSugestoes._res || []).length;
-  if (n === 1) ivAbrir(ivSugestoes._res[0].bar || ivSugestoes._res[0].cod);
+  const t = limpar(e.target.value), n = (ivSugestoes._res || []).length;
+  const numerico = /^[\d\s-]+$/.test(t);
+  if (numerico) {
+    const c = t.replace(/\s+/g, '');
+    if (lookup(c) || lookup(converter(c)) || !n) ivAbrir(c);          // código completo (ou fora da lista): entra logo
+    else if (n === 1 && c.length < 8) ivAbrir(ivSugestoes._res[0].bar || ivSugestoes._res[0].cod);
+    else toast('Escolhe o artigo na lista, ou toca em «Usar o código escrito».', 3500);
+  } else if (n === 1) ivAbrir(ivSugestoes._res[0].bar || ivSugestoes._res[0].cod);
   else if (n > 1) toast('Escolhe o artigo na lista.');
-  else ivAbrir(e.target.value);
+  else if (t) ivAbrir(t);
 });
 $('#iv-usar').addEventListener('change', e => { if (cur) { cur.usar = e.target.checked; atualizarPainel(true); } });
 $('#iv-save').addEventListener('click', () => ivGuardar('subst'));
@@ -600,12 +612,13 @@ $('#iv-dias').addEventListener('input', e => { kvSet('avisoDias', e.target.value
 $('#iv-arm').addEventListener('input', e => { const d = docAtual(); if (d) { d.arm = e.target.value.trim(); kvSet('docs', docs); } });
 
 /* ---------- LEITURAS e exportação ---------- */
+function precoDe(l) { const a = lookup(l.final); return a && a.preco ? fmtPreco(a.preco) : ''; }
 function renderLeituras() {
   const f = norm($('#lt-f').value);
   const lista = leit.slice().sort((a, b) => b.t - a.t).filter(l => !f || norm(l.desc + ' ' + l.final + ' ' + l.lido).includes(f));
   $('#lt-list').innerHTML = lista.length ? lista.slice(0, 500).map(l =>
     '<div class="item click" data-l="' + esc(l.id) + '"><div class="t"><b>' + (l.desc ? esc(l.desc) : '<span style="color:var(--er)">FORA DA LISTA</span>') + '</b><span class="muted">' + esc(l.final) + (l.val ? ' · val. ' + fmtData(new Date(l.val + 'T00:00:00')) : '') + '</span></div>' +
-    '<div class="q">' + fmtQ(l.qtd) + '</div><button class="red" data-del="' + esc(l.id) + '">✕</button></div>').join('') +
+    '<div class="q">' + fmtQ(l.qtd) + (precoDe(l) ? '<small class="muted" style="display:block;font-size:12px;font-weight:normal">' + esc(precoDe(l)) + '</small>' : '') + '</div><button class="red" data-del="' + esc(l.id) + '">✕</button></div>').join('') +
     (lista.length > 500 ? '<div class="muted" style="padding:8px">A mostrar 500 de ' + lista.length + '. Usa o filtro.</div>' : '')
     : '<div class="muted" style="padding:12px">Sem leituras.</div>';
 }
