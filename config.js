@@ -4,6 +4,8 @@
 // A app descarrega-o sozinha sempre que abre com internet e guarda uma cópia para funcionar offline.
 // Colunas esperadas (por esta ordem ou com estes nomes):
 //   Código de barras, Código artigo, Descrição do artigo, Preço 1
+// Coluna opcional no fim: "Depósito" (valor do depósito Volta por unidade, ex: 0,10; vazio ou 0 = sem depósito).
+// Se existir, o inventário mostra o depósito de cada artigo e o total.
 var LISTA_URL = 'artigos.csv';
 
 // ---------------------------------------------------------------
