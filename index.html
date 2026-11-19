@@ -3,26 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#1f4e78">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <title>Preços e Inventário</title>
 <style>
-  :root{--az:#1f4e78;--az2:#dde9f5;--cz:#666;--ok:#2e7d32;--er:#c62828;--am:#fff4d6}
+  :root{--az:#1b1b1b;--ye:#FEC400;--cz:#666;--ok:#2e7d32;--er:#c62828;--am:#fff4d6}
   *{box-sizing:border-box}
   body{margin:0;font-family:system-ui,Arial,sans-serif;font-size:16px;background:#f3f5f8;color:#1b1b1b;padding-bottom:80px}
-  header{background:var(--az);color:#fff;padding:10px 14px;position:sticky;top:0;z-index:5}
-  header h1{margin:0;font-size:18px}
-  header small{opacity:.85}
-  nav{display:flex;background:#fff;border-bottom:1px solid #ccd;position:sticky;top:50px;z-index:4}
-  nav button{flex:1;padding:12px 4px;border:0;background:none;font-size:15px;color:var(--cz);border-bottom:3px solid transparent}
-  nav button.on{color:var(--az);border-bottom-color:var(--az);font-weight:bold}
+  header{background:#000;color:#fff;height:56px;padding:6px 14px;position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between}
+  header img{height:40px;display:block}
+  header small{color:var(--ye);font-size:13px}
+  nav{display:flex;background:#fff;border-bottom:1px solid #ccd;position:sticky;top:56px;z-index:4}
+  nav button{flex:1;padding:12px 2px;border:0;background:none;font-size:13px;color:var(--cz);border-bottom:3px solid transparent}
+  nav button.on{color:#000;border-bottom-color:var(--ye);font-weight:bold}
   section{display:none;padding:12px}
   section.on{display:block}
   input[type=text],input[type=search],select{width:100%;font-size:18px;padding:12px;border:1px solid #bbb;border-radius:8px;background:#fff;margin:4px 0 8px}
   label{font-size:13px;color:var(--cz)}
   button{font-size:16px;border:0;border-radius:8px;padding:12px 14px;cursor:pointer}
-  button.pri{background:var(--az);color:#fff}
+  button.pri{background:var(--ye);color:#111;font-weight:bold}
   button.sec{background:#e3e7ee;color:#222}
   button.red{background:#fde7e7;color:var(--er)}
   .row{display:flex;gap:8px;flex-wrap:wrap}
@@ -55,18 +55,27 @@
 </style>
 </head>
 <body>
-<header><h1>Preços e Inventário</h1><small id="hd-info">sem artigos carregados</small></header>
+<header><img src="logo.png" alt="Bom Dia São Jorge" id="logo"><small id="hd-info">sem artigos carregados</small></header>
 <nav id="tabs">
   <button data-t="precos" class="on">💶 Preços</button>
-  <button data-t="inv">📦 Inventário</button>
+  <button data-t="inv">📦 Guias/Inventário</button>
   <button data-t="leit">📋 Leituras</button>
   <button data-t="art">⚙️ Artigos</button>
 </nav>
+<div id="doc-bar" hidden style="background:#fff;padding:10px 12px;border-bottom:1px solid #ccd">
+  <label>Documento (guia ou inventário)</label>
+  <select id="dc-sel" style="margin:4px 0 8px"></select>
+  <div class="row">
+    <button class="sec" id="dc-new">➕ Novo</button>
+    <button class="sec" id="dc-ren">✏️ Nome</button>
+    <button class="red" id="dc-del">🗑 Apagar</button>
+  </div>
+</div>
 
 <!-- ============ PREÇOS ============ -->
 <section id="precos" class="on">
   <button class="pri" id="pc-cam" style="width:100%;font-size:20px;padding:16px">📷 Ler código com a câmara</button>
-  <input type="search" id="pc-in" placeholder="Código ou parte do nome" autocomplete="off" autocapitalize="off" style="margin-top:12px">
+  <input type="search" id="pc-in" placeholder="Nome, código de barras ou código artigo" autocomplete="off" autocapitalize="off" style="margin-top:12px">
   <select id="pc-modo">
     <option value="contem">Contém (todas as palavras)</option>
     <option value="comeca">Começa por</option>
@@ -79,12 +88,13 @@
 
 <!-- ============ INVENTÁRIO ============ -->
 <section id="inv">
-  <label>Código de armazém (igual em todo o inventário)</label>
+  <label>Código de armazém deste documento</label>
   <input type="text" id="iv-arm" placeholder="ex: 01" autocomplete="off">
   <div class="row">
     <button class="pri" id="iv-cam" style="font-size:20px;padding:16px">📷 Ler código</button>
   </div>
-  <input type="search" id="iv-in" placeholder="Ou escreve / bipa o código e Enter" autocomplete="off" autocapitalize="off" style="margin-top:12px">
+  <input type="search" id="iv-in" placeholder="Código ou nome do artigo (Enter)" autocomplete="off" autocapitalize="off" style="margin-top:12px">
+  <div id="iv-res"></div>
   <label class="chk"><input type="checkbox" id="iv-cont" checked> Abrir a câmara sozinha depois de guardar</label>
 
   <div id="iv-panel" class="card" hidden>
@@ -107,9 +117,14 @@
 
 <!-- ============ LEITURAS ============ -->
 <section id="leit">
-  <div class="row">
-    <button class="pri" id="ex-share">📤 Enviar .plt</button>
-    <button class="sec" id="ex-down">⬇️ Transferir .plt</button>
+  <div class="card" style="margin-top:0">
+    <label>Enviar o ficheiro .plt para (email)</label>
+    <input type="text" id="ex-email" inputmode="email" placeholder="nome@exemplo.pt" autocomplete="email" autocapitalize="off">
+    <button class="pri" id="ex-mail" style="width:100%">📧 Enviar por email</button>
+    <div class="row" style="margin-top:8px">
+      <button class="sec" id="ex-share">📤 Partilhar</button>
+      <button class="sec" id="ex-down">⬇️ Transferir</button>
+    </div>
   </div>
   <input type="search" id="lt-f" placeholder="Filtrar leituras" autocomplete="off" style="margin-top:10px">
   <div id="lt-list"></div>
@@ -211,13 +226,14 @@ function construirArtigos(rows) {
     const desc = (r[cDes] || '').trim();
     const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
     if (!desc && !bar && !cod) continue;
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), n: norm(desc) });
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
 function indexar() {
   idxBar = new Map(); idxCod = new Map(); idxBar0 = new Map(); idxCod0 = new Map();
   artigos.forEach((a, i) => {
+    if (a.b === undefined) { a.b = (a.bar || '').toLowerCase(); a.c = (a.cod || '').toLowerCase(); }
     if (a.bar) { if (!idxBar.has(a.bar)) idxBar.set(a.bar, i); const s = strip0(a.bar); if (s && !idxBar0.has(s)) idxBar0.set(s, i); }
     if (a.cod) { if (!idxCod.has(a.cod)) idxCod.set(a.cod, i); const s = strip0(a.cod); if (s && !idxCod0.has(s)) idxCod0.set(s, i); }
   });
@@ -236,18 +252,28 @@ function fmtPreco(p) {
   const n = parseFloat(s);
   return isNaN(n) ? String(p) : n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 }
+// Pesquisa por descrição (conforme o modo) e também por parte do código de barras ou do código artigo.
 function pesquisarNome(txt, modo, limite) {
   const t = norm(txt); if (t.length < 2) return [];
   const pal = t.split(/\s+/);
-  const out = [];
+  const nomes = [], iniciam = [], contem = [];
   for (const a of artigos) {
     let ok = false;
     if (modo === 'contem') ok = pal.every(p => a.n.includes(p));
     else if (modo === 'comeca') ok = a.n.startsWith(t);
     else if (modo === 'termina') ok = a.n.endsWith(t);
     else ok = a.n === t;
-    if (ok) { out.push(a); if (out.length >= limite) break; }
+    if (ok) nomes.push(a);
+    if (/[0-9]/.test(t)) {   // o texto parece (parte de) um código
+      const tc = t.replace(/\s+/g, '');
+      if (a.b.startsWith(tc) || a.c.startsWith(tc)) iniciam.push(a);
+      else if (a.b.includes(tc) || a.c.includes(tc)) contem.push(a);
+    }
   }
+  const soNumeros = /^[\d\s-]+$/.test(t);
+  const todos = soNumeros ? iniciam.concat(contem, nomes) : nomes.concat(iniciam, contem);
+  const vistos = new Set(), out = [];
+  for (const a of todos) { if (!vistos.has(a)) { vistos.add(a); out.push(a); if (out.length >= limite) break; } }
   return out;
 }
 
@@ -317,6 +343,7 @@ function lerCodigo() {
 function irPara(t) {
   document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === t));
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  $('#doc-bar').hidden = !(t === 'inv' || t === 'leit');
   if (t === 'leit') renderLeituras();
   window.scrollTo(0, 0);
 }
@@ -337,7 +364,7 @@ function pcBuscar(txt) {
   const res = pesquisarNome(t, $('#pc-modo').value, 100);
   if (!res.length) { if (t.length >= 2) $('#pc-res').innerHTML = '<div class="bad">Não encontrado: ' + esc(t) + '</div>'; return; }
   $('#pc-res').innerHTML = '<div class="muted" style="margin:6px 0">' + res.length + (res.length >= 100 ? '+' : '') + ' resultado(s)</div>' +
-    res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc(r.cod || r.bar) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
+    res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
   pcBuscar._res = res;
 }
 $('#pc-res').addEventListener('click', e => { const it = e.target.closest('.item'); if (it && pcBuscar._res) mostrarCartao(pcBuscar._res[+it.dataset.i]); });
@@ -351,7 +378,50 @@ $('#pc-cam').addEventListener('click', async () => {
 /* ---------- INVENTÁRIO ---------- */
 let leit = [];      // {lido, usar, final, desc, qtd, t}
 let cur = null;     // leitura em edição
-const salvarLeit = () => kvSet('leit', leit);
+
+/* documentos: cada guia/inventário tem nome, armazém e leituras próprios */
+let docs = [], docId = null;
+const docAtual = () => docs.find(d => d.id === docId);
+function novoDoc(nome, arm) {
+  const d = { id: 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), nome, arm: arm || '', leit: [], t: Date.now(), exp: null };
+  docs.push(d); return d;
+}
+function salvarLeit() { const d = docAtual(); if (d) d.leit = leit; return kvSet('docs', docs); }
+function renderDocs() {
+  $('#dc-sel').innerHTML = docs.map(d => '<option value="' + esc(d.id) + '">' + esc(d.nome) + ' · ' + d.leit.length + ' linhas' + (d.exp ? ' · ✔ exportado' : '') + '</option>').join('');
+  $('#dc-sel').value = docId;
+}
+function abrirDoc(id) {
+  const d = docs.find(x => x.id === id) || docs[0];
+  docId = d.id; leit = d.leit;
+  $('#iv-arm').value = d.arm || '';
+  kvSet('docId', docId);
+  ivFechar(); renderDocs(); resumo(); renderLeituras();
+}
+function marcarExportado() { const d = docAtual(); if (d) { d.exp = Date.now(); salvarLeit(); renderDocs(); } }
+$('#dc-sel').addEventListener('change', e => abrirDoc(e.target.value));
+$('#dc-new').addEventListener('click', async () => {
+  const nome = prompt('Nome do novo documento (ex: Guia 1234 ou Inventário Loja):', '');
+  if (nome === null) return;
+  if (!nome.trim()) { toast('Escreve um nome para o documento.'); return; }
+  await salvarLeit();
+  const d = novoDoc(nome.trim(), (docAtual() || {}).arm || '');
+  await kvSet('docs', docs); abrirDoc(d.id);
+  toast('Documento "' + d.nome + '" criado.');
+});
+$('#dc-ren').addEventListener('click', async () => {
+  const d = docAtual(); if (!d) return;
+  const nome = prompt('Novo nome do documento:', d.nome);
+  if (nome === null || !nome.trim()) return;
+  d.nome = nome.trim(); await kvSet('docs', docs); renderDocs();
+});
+$('#dc-del').addEventListener('click', async () => {
+  const d = docAtual(); if (!d) return;
+  if (!confirm('Apagar o documento "' + d.nome + '" e as suas ' + d.leit.length + ' linhas? Esta ação não se desfaz.')) return;
+  docs = docs.filter(x => x !== d);
+  if (!docs.length) novoDoc('Inventário', '');
+  await kvSet('docs', docs); abrirDoc(docs[0].id);
+});
 const fmtQ = n => String(Math.round(n * 1000) / 1000).replace('.', ',');
 
 function resumo() {
@@ -376,7 +446,7 @@ function atualizarPainel(manterQtd) {
 }
 function ivAbrir(raw, entry) {
   const lido = limpar(raw); if (!lido) return;
-  irPara('inv');
+  irPara('inv'); ivSugestoes('');
   const fin0 = resolver(lido, false);
   const ex = entry || leit.find(l => l.lido === lido) || leit.find(l => l.final === fin0) || null;
   cur = { lido, usar: ex && ex.lido === lido ? ex.usar : false, ex };
@@ -384,7 +454,7 @@ function ivAbrir(raw, entry) {
   atualizarPainel(false);
   const q = $('#iv-qtd'); q.focus(); q.select();
 }
-function ivFechar() { $('#iv-panel').hidden = true; cur = null; $('#iv-in').value = ''; }
+function ivFechar() { $('#iv-panel').hidden = true; cur = null; $('#iv-in').value = ''; ivSugestoes(''); }
 async function ivGuardar(somar) {
   if (!cur) return;
   const txt = $('#iv-qtd').value.trim().replace(',', '.');
@@ -402,13 +472,34 @@ async function ivGuardar(somar) {
 }
 async function ivCamera() { const raw = await lerCodigo(); if (raw) ivAbrir(raw); }
 $('#iv-cam').addEventListener('click', ivCamera);
-$('#iv-in').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivAbrir(e.target.value); } });
+// Se escreveres (parte de) um nome, aparecem sugestões para escolher; códigos entram diretamente.
+function ivSugestoes(txt) {
+  const box = $('#iv-res'), t = limpar(txt);
+  ivSugestoes._res = [];
+  if (!/[a-zA-Z]/.test(t) || t.length < 3 || lookup(t) || lookup(converter(t))) { box.innerHTML = ''; return; }
+  const res = pesquisarNome(t, 'contem', 30);
+  ivSugestoes._res = res;
+  box.innerHTML = res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
+}
+$('#iv-in').addEventListener('input', e => ivSugestoes(e.target.value));
+$('#iv-res').addEventListener('click', e => {
+  const it = e.target.closest('.item'); if (!it) return;
+  const a = (ivSugestoes._res || [])[+it.dataset.i]; if (a) ivAbrir(a.bar || a.cod);
+});
+$('#iv-in').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const n = (ivSugestoes._res || []).length;
+  if (n === 1) ivAbrir(ivSugestoes._res[0].bar || ivSugestoes._res[0].cod);
+  else if (n > 1) toast('Escolhe o artigo na lista.');
+  else ivAbrir(e.target.value);
+});
 $('#iv-usar').addEventListener('change', e => { if (cur) { cur.usar = e.target.checked; atualizarPainel(true); } });
 $('#iv-save').addEventListener('click', () => ivGuardar(false));
 $('#iv-add').addEventListener('click', () => ivGuardar(true));
 $('#iv-cancel').addEventListener('click', ivFechar);
 $('#iv-qtd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivGuardar(false); } });
-$('#iv-arm').addEventListener('input', e => kvSet('arm', e.target.value.trim()));
+$('#iv-arm').addEventListener('input', e => { const d = docAtual(); if (d) { d.arm = e.target.value.trim(); kvSet('docs', docs); } });
 
 /* ---------- LEITURAS e exportação ---------- */
 function renderLeituras() {
@@ -439,29 +530,54 @@ function construirPlt(arm) {
   m.forEach((q, cod) => linhas.push(cod + '|' + arm + '|||' + String(Math.round(q * 1000) / 1000)));
   return linhas.length ? linhas.join('\r\n') + '\r\n' : '';
 }
-function nomePlt(arm) {
+function nomePlt(arm, nomeDoc) {
   const d = new Date(), p = n => String(n).padStart(2, '0');
-  return 'inventario_' + arm.replace(/[^\w-]/g, '') + '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.plt';
+  const slug = norm(nomeDoc || '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'inventario';
+  return slug + '_' + arm.replace(/[^\w-]/g, '') + '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.plt';
 }
 function prepararExport() {
+  const doc = docAtual();
   const arm = $('#iv-arm').value.trim();
   if (!arm) { irPara('inv'); $('#iv-arm').focus(); toast('Escreve primeiro o código de armazém.', 3500); return null; }
   if (!leit.length) { toast('Não há leituras para exportar.'); return null; }
-  return { texto: construirPlt(arm), nome: nomePlt(arm) };
+  const texto = construirPlt(arm);
+  return { texto, nome: nomePlt(arm, doc.nome), assunto: doc.nome + ' (armazém ' + arm + ')', linhas: texto.split('\r\n').filter(Boolean).length, doc: doc.nome };
 }
 function transferir(texto, nome) {
   const url = URL.createObjectURL(new Blob([texto], { type: 'text/plain' }));
   const a = document.createElement('a'); a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
-$('#ex-down').addEventListener('click', () => { const x = prepararExport(); if (x) transferir(x.texto, x.nome); });
+$('#ex-down').addEventListener('click', () => { const x = prepararExport(); if (x) { transferir(x.texto, x.nome); marcarExportado(); } });
 $('#ex-share').addEventListener('click', async () => {
   const x = prepararExport(); if (!x) return;
   const file = new File([x.texto], x.nome, { type: 'text/plain' });
   try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: x.nome, text: 'Inventário ' + x.nome });
-    else { transferir(x.texto, x.nome); toast('Partilha não disponível: o ficheiro foi transferido.', 4000); }
-  } catch (e) { if (e.name !== 'AbortError') { transferir(x.texto, x.nome); toast('Não foi possível partilhar: o ficheiro foi transferido.', 4000); } }
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: x.nome, text: x.assunto }); marcarExportado(); }
+    else { transferir(x.texto, x.nome); marcarExportado(); toast('Partilha não disponível neste aparelho: o ficheiro foi transferido.', 4000); }
+  } catch (e) { if (e.name !== 'AbortError') { transferir(x.texto, x.nome); marcarExportado(); toast('Não foi possível partilhar: o ficheiro foi transferido.', 4000); } }
+});
+// Envio direto por email para o endereço escrito na hora (precisa do serviço de envio configurado em config.js)
+$('#ex-mail').addEventListener('click', async () => {
+  const x = prepararExport(); if (!x) return;
+  const para = $('#ex-email').value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(para)) { toast('Escreve um endereço de email válido.', 3500); $('#ex-email').focus(); return; }
+  if (typeof ENVIO_URL === 'undefined' || !ENVIO_URL) { toast('O envio por email ainda não está configurado. Usa Partilhar ou Transferir.', 5000); return; }
+  if (!confirm('Enviar "' + x.doc + '" (' + x.linhas + ' linhas) para ' + para + '?')) return;
+  kvSet('email', para);
+  const b = $('#ex-mail'); b.disabled = true; toast('A enviar...', 15000);
+  try {
+    const r = await fetch(ENVIO_URL, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ chave: typeof ENVIO_CHAVE === 'undefined' ? '' : ENVIO_CHAVE, para, nome: x.nome, assunto: x.assunto, texto: x.texto, linhas: x.linhas })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.erro || 'o serviço recusou o envio');
+    marcarExportado(); toast('✔ Enviado para ' + para, 4500);
+  } catch (e) {
+    toast('Não consegui confirmar o envio (' + e.message + '). Antes de tentar de novo, vê se o email chegou.', 8000);
+  }
+  b.disabled = false;
 });
 
 /* ---------- ARTIGOS (carregar CSV) ---------- */
@@ -526,8 +642,15 @@ $('#ar-upd').addEventListener('click', async () => {
 (async function init() {
   try {
     artigos = (await kvGet('artigos')) || []; indexar(); infoArtigos(await kvGet('artigosData'));
-    leit = (await kvGet('leit')) || []; resumo();
-    $('#iv-arm').value = (await kvGet('arm')) || '';
+    docs = (await kvGet('docs')) || [];
+    if (!docs.length) {   // primeira vez (ou versão antiga): cria o primeiro documento e aproveita leituras antigas
+      const d = novoDoc('Inventário', (await kvGet('arm')) || '');
+      const antigas = await kvGet('leit'); if (antigas && antigas.length) d.leit = antigas;
+      await kvSet('docs', docs);
+    }
+    const guardado = await kvGet('docId');
+    abrirDoc(docs.some(d => d.id === guardado) ? guardado : docs[0].id);
+    $('#ex-email').value = (await kvGet('email')) || '';
   } catch (e) { toast('Aviso: armazenamento local indisponível (' + e.message + ')', 5000); }
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => { });
