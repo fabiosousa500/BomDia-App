@@ -377,13 +377,14 @@ function lerCodigo() {
     $('#cam-x').onclick = () => fim(null);
     const tb = $('#cam-t'); tb.hidden = true; tb.style.background = '#fff'; let tOn = false;
     try {
-      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) { toast('Sem acesso à câmara: ' + e.message, 4000); return resolve(null); }
     v.srcObject = camStream; try { await v.play(); } catch (e) { }
     ov.classList.add('on');
     try {
       const trk = camStream.getVideoTracks()[0];
       const caps = trk.getCapabilities ? trk.getCapabilities() : {};
+      try { if ((caps.focusMode || []).includes('continuous')) await trk.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { }
       if (caps.torch) {
         tb.hidden = false;
         tb.onclick = async () => {
