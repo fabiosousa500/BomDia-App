@@ -108,6 +108,9 @@
   <div id="iv-panel" class="card" hidden>
     <div id="iv-desc" class="big"></div>
     <div id="iv-preco" class="preco" style="font-size:30px;margin:2px 0" hidden></div>
+    <div id="iv-bal" class="warn" hidden></div>
+    <label class="chk"><input type="checkbox" id="iv-volta"> ♻️ Tem depósito Volta (conta para a taxa)</label>
+    <div id="iv-dep" class="muted" style="color:#1b6b2f;font-weight:bold" hidden></div>
     <div id="iv-cod" class="muted"></div>
     <div id="iv-gs" hidden></div>
     <div id="iv-exist" class="warn" hidden></div>
@@ -122,7 +125,7 @@
     </div>
   </div>
   <div class="stat" style="margin-top:10px">
-    <div><b id="st-n">0</b>códigos</div><div><b id="st-q">0</b>unidades</div>
+    <div><b id="st-n">0</b>códigos</div><div><b id="st-q">0</b>unidades</div><div id="st-dbox" hidden><b id="st-d">0</b>depósito</div><div id="st-vbox" hidden><b id="st-v">0</b>taxa Volta</div>
   </div>
 </section>
 
@@ -155,6 +158,12 @@
       <input type="file" id="ar-file" accept=".csv,.txt,text/csv,text/plain" style="margin:8px 0;width:100%">
       <p class="muted">Se carregares um ficheiro à mão, a próxima atualização automática volta a usar a lista oficial.</p>
       <button class="red" id="ar-del">Apagar lista deste telemóvel</button>
+    </details>
+    <details style="margin-top:12px">
+      <summary class="muted">Avançado: código do artigo da taxa Volta</summary>
+      <p class="muted">Código que vai na última linha do .plt com o total de unidades dos artigos marcados com depósito Volta.</p>
+      <input type="text" id="cfg-taxa" autocomplete="off" autocapitalize="characters">
+      <button class="sec" id="cfg-taxa-save">Guardar</button>
     </details>
     <details style="margin-top:12px">
       <summary class="muted">Avançado: serviço de envio por email deste telemóvel</summary>
@@ -239,13 +248,15 @@ function construirArtigos(rows) {
   const cCod = find(x => x.includes('artigo') && x.includes('cod'), 1);
   const cDes = find(x => x.includes('descri'), 2);
   const cPre = find(x => x.startsWith('preco'), 3);
+  const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const desc = (r[cDes] || '').trim();
     const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
     if (!desc && !bar && !cod) continue;
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
@@ -266,6 +277,9 @@ function lookup(c) {
   if (i == null) { const s = strip0(c); if (s) { i = idxBar0.get(s); if (i == null) i = idxCod0.get(s); } }
   return i == null ? null : artigos[i];
 }
+function numPT(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return 0; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) || n < 0 ? 0 : n; }
+const eur = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+function depTexto(a, q) { return a && a.dep > 0 ? '♻️ Depósito Volta: ' + eur(a.dep) + ' por unidade' + (q > 0 ? ' · ' + fmtQ(q) + ' un. = ' + eur(a.dep * q) : '') : ''; }
 function fmtPreco(p) {
   let s = String(p).replace(/[\s€]/g, '');
   if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
@@ -309,9 +323,33 @@ function converter(l) {
   if (base && /^\d{12}$/.test(base)) return base + checkDigit(base);
   return l;
 }
+/* ---------- etiquetas de balança: 29 = peso (kg), 27 = preço ---------- */
+// 29 + 5 dígitos do artigo + 2 inteiros + 3 decimais (kg) + controlo   |   27 + 5 dígitos do artigo + 3 inteiros + 2 decimais (€) + controlo
+function parseBalanca(raw) {
+  const m = String(raw == null ? '' : raw).replace(/\s+/g, '').match(/^(27|29)(\d{5})(\d{5})\d$/);
+  if (!m) return null;
+  const peso = m[1] === '29', v = parseInt(m[3], 10);
+  return { tipo: peso ? 'peso' : 'preco', art: m[2], valor: peso ? v / 1000 : v / 100 };
+}
+// quantidade em kg (3 casas): ao peso é a da etiqueta; ao preço é preço da etiqueta ÷ preço por kg do ficheiro
+function qtdBalanca(b, a) {
+  const pk = a ? numPT(a.preco) : 0;
+  if (b.tipo === 'peso') return { kg: Math.round(b.valor * 1000) / 1000, total: pk > 0 ? b.valor * pk : null, pk, semPreco: false };
+  if (!(pk > 0)) return { kg: null, total: b.valor, pk: 0, semPreco: true };
+  return { kg: Math.round(b.valor / pk * 1000) / 1000, total: b.valor, pk, semPreco: false };
+}
+function textoBalanca(b, q) {
+  if (b.tipo === 'peso') return '⚖️ Etiqueta ao peso: <b>' + fmtQ(q.kg) + ' kg</b>' + (q.total != null ? ' · total ' + eur(q.total) : '');
+  return '🏷️ Etiqueta ao preço: <b>' + eur(b.valor) + '</b>' + (q.semPreco ? '' : ' → <b>' + fmtQ(q.kg) + ' kg</b> (' + eur(b.valor) + ' ÷ ' + eur(q.pk) + '/kg)');
+}
+// artigos com depósito Volta (marcados neste telemóvel) e linha da taxa no .plt
+let voltaSet = new Set(), codTaxa = 'VALOR DEPOSITO';
+const isVolta = c => voltaSet.has(c);
+const taxaTotal = () => Math.round(leit.reduce((s, l) => s + (isVolta(l.final) ? l.qtd : 0), 0) * 1000) / 1000;
 // src: código a converter quando a etiqueta GS1-128 indica o GTIN do conteúdo (AI 02) e não o da caixa
 function resolver(lido, usar, src) {
   if (usar) return lido;
+  const bal = parseBalanca(lido); if (bal) return bal.art;   // balança: guarda só os 5 dígitos do artigo
   const base = src || lido;
   const conv = converter(base);
   let a = lookup(conv); if (a) return a.bar || conv;
@@ -320,7 +358,7 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v10';
+const VERSAO = 'v12';
 document.addEventListener('DOMContentLoaded', () => { const v = document.getElementById('ver'); if (v) v.textContent = 'Versão da app: ' + VERSAO; });
 const GS = '\x1d';
 const AI_FIXOS = { '00': 18, '01': 14, '02': 14, '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6, '20': 2 };
@@ -442,15 +480,18 @@ function irPara(t) {
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) irPara(b.dataset.t); });
 
 /* ---------- PREÇOS ---------- */
-function mostrarCartao(a, codigo) {
+function mostrarCartao(a, codigo, bal) {
   $('#pc-res').innerHTML = '';
-  $('#pc-card').innerHTML = '<div class="card"><div class="big">' + esc(a.desc) + '</div><div class="preco">' + esc(fmtPreco(a.preco)) + '</div>' +
+  const eb = bal ? '<div class="warn">' + textoBalanca(bal, qtdBalanca(bal, a)) + (qtdBalanca(bal, a).semPreco ? '<br>Sem preço por kg no ficheiro.' : '') + '</div>' : '';
+  $('#pc-card').innerHTML = '<div class="card"><div class="big">' + esc(a.desc) + '</div><div class="preco">' + esc(fmtPreco(a.preco)) + (bal ? '<span class="muted" style="font-size:16px"> /kg</span>' : '') + '</div>' + eb +
     '<div class="muted">Cód. artigo: ' + esc(a.cod || '-') + '<br>Cód. barras: ' + esc(a.bar || '-') + '</div></div>';
 }
 function pcBuscar(txt) {
   const t = limpar(txt);
   $('#pc-card').innerHTML = ''; $('#pc-res').innerHTML = '';
   if (!t) return;
+  const bal = parseBalanca(t);
+  if (bal) { const ab = lookup(bal.art); if (ab) return mostrarCartao(ab, null, bal); $('#pc-res').innerHTML = '<div class="bad">Etiqueta de balança: artigo ' + esc(bal.art) + ' não encontrado</div>'; return; }
   let a = lookup(t) || lookup(converter(t));
   if (a) return mostrarCartao(a);
   const res = pesquisarNome(t, $('#pc-modo').value, 100);
@@ -523,6 +564,9 @@ function resumo() {
   $('#st-n').textContent = finais.size.toLocaleString('pt-PT');
   let s = 0; finais.forEach(v => s += v);
   $('#st-q').textContent = fmtQ(s);
+  let d = 0; finais.forEach((q, cod) => { const a = lookup(cod); if (a && a.dep > 0) d += a.dep * q; });
+  const tv = taxaTotal(); $('#st-vbox').hidden = !(tv > 0); $('#st-v').textContent = fmtQ(tv);
+  $('#st-dbox').hidden = !(d > 0); $('#st-d').textContent = eur(d);
 }
 const novoId = () => 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function mostrarGS1(g) {
@@ -541,12 +585,21 @@ function mostrarGS1(g) {
   box.innerHTML = partes.join('<br>'); box.hidden = false;
   if (alerta && navigator.vibrate) navigator.vibrate([200, 100, 200]);
 }
+function mostrarDep() {
+  const el = $('#iv-dep'), q = parseFloat(($('#iv-qtd').value || '').replace(',', '.'));
+  const t = cur ? depTexto(cur.art, isNaN(q) ? 0 : q) : '';
+  el.hidden = !t; el.textContent = t;
+}
 function atualizarPainel(manterQtd) {
   const fin = resolver(cur.lido, cur.usar, cur.src);
   const a = lookup(fin);
   cur.final = fin; cur.desc = a ? a.desc : '';
   $('#iv-desc').innerHTML = a ? esc(a.desc) : '<span style="color:var(--er)">ARTIGO FORA DA LISTA</span>';
   const pv = $('#iv-preco'); pv.hidden = !(a && a.preco); if (a && a.preco) pv.textContent = 'Preço de venda: ' + fmtPreco(a.preco);
+  cur.art = a; mostrarDep();
+  cur.balq = cur.bal ? qtdBalanca(cur.bal, a) : null;
+  { const eb = $('#iv-bal'); eb.hidden = !cur.bal; if (cur.bal) eb.innerHTML = textoBalanca(cur.bal, cur.balq) + (cur.balq.semPreco ? '<br><b style="color:var(--er)">Sem preço por kg no ficheiro de artigos: escreve tu a quantidade em kg.</b>' : '') + '<br>Confirma a quantidade (kg) antes de guardar.'; }
+  $('#iv-volta').checked = isVolta(fin);
   $('#iv-cod').innerHTML = 'Código guardado: <b>' + esc(fin) + '</b>' + (fin !== cur.lido ? ' (lido: ' + esc(cur.lido.length > 40 ? cur.lido.slice(0, 40) + '…' : cur.lido) + ')' : '');
   // linhas já picadas deste artigo (várias linhas do mesmo código são permitidas)
   const rel = leit.filter(l => l.final === fin || l.lido === cur.lido);
@@ -558,14 +611,15 @@ function atualizarPainel(manterQtd) {
   $('#iv-save').textContent = ex ? (cur.entry ? '✏️ Alterar esta linha' : '✏️ Alterar a última linha') : 'Guardar';
   $('#iv-add').hidden = !ex; $('#iv-new').hidden = !ex;
   $('#iv-usar').checked = cur.usar;
-  if (!manterQtd) $('#iv-qtd').value = cur.gs && cur.gs.unid != null ? fmtQ(cur.gs.unid) : (ex ? fmtQ(ex.qtd) : '');
+  if (!manterQtd) $('#iv-qtd').value = cur.balq ? (cur.balq.kg != null ? fmtQ(cur.balq.kg) : '') : (cur.gs && cur.gs.unid != null ? fmtQ(cur.gs.unid) : (ex ? fmtQ(ex.qtd) : ''));
+  mostrarDep();
 }
 function ivAbrir(raw, entry) {
   const lido = limpar(raw); if (!lido) return;
   irPara('inv'); ivSugestoes('');
   const gs = entry ? null : infoGS1(parseGS1(raw));
   const mesmo = leit.filter(l => l.lido === lido).sort((x, y) => y.t - x.t)[0];
-  cur = { lido, usar: entry ? !!entry.usar : (mesmo ? !!mesmo.usar : false), entry: entry || null, src: gs && gs.contido ? '01' + gs.contido : '', gs, ex: null };
+  cur = { lido, usar: entry ? !!entry.usar : (mesmo ? !!mesmo.usar : false), entry: entry || null, bal: entry ? null : parseBalanca(lido), src: gs && gs.contido ? '01' + gs.contido : '', gs, ex: null };
   $('#iv-panel').hidden = false;
   mostrarGS1(gs);
   atualizarPainel(false);
@@ -633,17 +687,23 @@ $('#iv-save').addEventListener('click', () => ivGuardar('subst'));
 $('#iv-add').addEventListener('click', () => ivGuardar('somar'));
 $('#iv-new').addEventListener('click', () => ivGuardar('nova'));
 $('#iv-cancel').addEventListener('click', ivFechar);
+$('#iv-qtd').addEventListener('input', mostrarDep);
+$('#iv-volta').addEventListener('change', async e => {
+  if (!cur) return;
+  if (e.target.checked) voltaSet.add(cur.final); else voltaSet.delete(cur.final);
+  await kvSet('volta', [...voltaSet]); resumo();
+});
 $('#iv-qtd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivGuardar('subst'); } });
 $('#iv-dias').addEventListener('input', e => { kvSet('avisoDias', e.target.value.trim()); if (cur && cur.gs) mostrarGS1(cur.gs); });
 $('#iv-arm').addEventListener('input', e => { const d = docAtual(); if (d) { d.arm = e.target.value.trim(); kvSet('docs', docs); } });
 
 /* ---------- LEITURAS e exportação ---------- */
-function precoDe(l) { const a = lookup(l.final); return a && a.preco ? fmtPreco(a.preco) : ''; }
+function precoDe(l) { const a = lookup(l.final); return a && a.preco ? fmtPreco(a.preco) + (a.dep > 0 ? ' · ♻️ ' + eur(a.dep * l.qtd) : '') : ''; }
 function renderLeituras() {
   const f = norm($('#lt-f').value);
   const lista = leit.slice().sort((a, b) => b.t - a.t).filter(l => !f || norm(l.desc + ' ' + l.final + ' ' + l.lido).includes(f));
   $('#lt-list').innerHTML = lista.length ? lista.slice(0, 500).map(l =>
-    '<div class="item click" data-l="' + esc(l.id) + '"><div class="t"><b>' + (l.desc ? esc(l.desc) : '<span style="color:var(--er)">FORA DA LISTA</span>') + '</b><span class="muted">' + esc(l.final) + (l.val ? ' · val. ' + fmtData(new Date(l.val + 'T00:00:00')) : '') + '</span></div>' +
+    '<div class="item click" data-l="' + esc(l.id) + '"><div class="t"><b>' + (l.desc ? esc(l.desc) : '<span style="color:var(--er)">FORA DA LISTA</span>') + '</b><span class="muted">' + esc(l.final) + (isVolta(l.final) ? ' · ♻️' : '') + (l.val ? ' · val. ' + fmtData(new Date(l.val + 'T00:00:00')) : '') + '</span></div>' +
     '<div class="q">' + fmtQ(l.qtd) + (precoDe(l) ? '<small class="muted" style="display:block;font-size:12px;font-weight:normal">' + esc(precoDe(l)) + '</small>' : '') + '</div><button class="red" data-del="' + esc(l.id) + '">✕</button></div>').join('') +
     (lista.length > 500 ? '<div class="muted" style="padding:8px">A mostrar 500 de ' + lista.length + '. Usa o filtro.</div>' : '')
     : '<div class="muted" style="padding:12px">Sem leituras.</div>';
@@ -663,6 +723,8 @@ $('#lt-clear').addEventListener('click', async () => {
 function construirPlt(arm) {
   const m = new Map();
   leit.forEach(l => m.set(l.final, (m.get(l.final) || 0) + l.qtd));
+  const tv = taxaTotal();
+  if (tv > 0) { const prev = m.get(codTaxa) || 0; m.delete(codTaxa); m.set(codTaxa, prev + tv); }   // taxa Volta: sempre a última linha
   const linhas = [];
   m.forEach((q, cod) => linhas.push(cod + '|' + arm + '|||' + String(Math.round(q * 1000) / 1000)));
   return linhas.length ? linhas.join('\r\n') + '\r\n' : '';
@@ -736,6 +798,7 @@ function envioCfg() {
   if (envioProprio.url) return envioProprio;
   return { url: typeof ENVIO_URL === 'undefined' ? '' : ENVIO_URL, chave: typeof ENVIO_CHAVE === 'undefined' ? '' : ENVIO_CHAVE };
 }
+$('#cfg-taxa-save').addEventListener('click', async () => { const v = $('#cfg-taxa').value.trim(); codTaxa = v || 'VALOR DEPOSITO'; $('#cfg-taxa').value = codTaxa; await kvSet('codTaxa', codTaxa); toast('✔ Código da taxa: ' + codTaxa); });
 $('#cfg-save').addEventListener('click', async () => {
   envioProprio = { url: $('#cfg-url').value.trim(), chave: $('#cfg-chave').value.trim() };
   await kvSet('envioUrl', envioProprio.url); await kvSet('envioChave', envioProprio.chave);
@@ -810,6 +873,7 @@ $('#ar-upd').addEventListener('click', async () => {
       const antigas = await kvGet('leit'); if (antigas && antigas.length) d.leit = antigas;
       await kvSet('docs', docs);
     }
+    voltaSet = new Set((await kvGet('volta')) || []); codTaxa = (await kvGet('codTaxa')) || 'VALOR DEPOSITO'; $('#cfg-taxa').value = codTaxa;
     const guardado = await kvGet('docId');
     abrirDoc(docs.some(d => d.id === guardado) ? guardado : docs[0].id);
     $('#ex-email').value = (await kvGet('email')) || '';
