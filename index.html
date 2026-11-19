@@ -27,6 +27,7 @@
   button.red{background:#fde7e7;color:var(--er)}
   .row{display:flex;gap:8px;flex-wrap:wrap}
   .row>*{flex:1}
+  #iv-panel .row button{flex:1 1 44%}
   .card{background:#fff;border-radius:10px;padding:14px;margin:10px 0;box-shadow:0 1px 3px #0002}
   .big{font-size:22px;font-weight:bold}
   .preco{font-size:42px;font-weight:bold;color:var(--az);margin:6px 0}
@@ -96,17 +97,20 @@
   <input type="search" id="iv-in" placeholder="Código ou nome do artigo (Enter)" autocomplete="off" autocapitalize="off" style="margin-top:12px">
   <div id="iv-res"></div>
   <label class="chk"><input type="checkbox" id="iv-cont" checked> Abrir a câmara sozinha depois de guardar</label>
+  <label class="chk" style="flex-wrap:wrap">Avisar validade com menos de <input type="text" id="iv-dias" inputmode="numeric" value="30" style="width:64px;height:auto;margin:0 8px;padding:8px;font-size:16px;text-align:center"> dias</label>
 
   <div id="iv-panel" class="card" hidden>
     <div id="iv-desc" class="big"></div>
     <div id="iv-cod" class="muted"></div>
+    <div id="iv-gs" hidden></div>
     <div id="iv-exist" class="warn" hidden></div>
     <label class="chk"><input type="checkbox" id="iv-usar"> Usar o código lido em vez do convertido</label>
     <label>Quantidade</label>
     <input type="text" id="iv-qtd" inputmode="decimal" autocomplete="off" placeholder="0">
     <div class="row">
       <button class="pri" id="iv-save">Guardar</button>
-      <button class="sec" id="iv-add" hidden>+ Somar</button>
+      <button class="sec" id="iv-add" hidden>+ Somar à linha</button>
+      <button class="sec" id="iv-new" hidden>🆕 Nova linha</button>
       <button class="sec" id="iv-cancel">Cancelar</button>
     </div>
   </div>
@@ -122,7 +126,7 @@
     <input type="text" id="ex-email" inputmode="email" placeholder="nome@exemplo.pt" autocomplete="email" autocapitalize="off">
     <button class="pri" id="ex-mail" style="width:100%">📧 Enviar por email</button>
     <div class="row" style="margin-top:8px">
-      <button class="sec" id="ex-share">📤 Partilhar</button>
+      <button class="sec" id="ex-share">📤 Partilhar / meu email</button>
       <button class="sec" id="ex-down">⬇️ Transferir</button>
     </div>
   </div>
@@ -144,6 +148,13 @@
       <input type="file" id="ar-file" accept=".csv,.txt,text/csv,text/plain" style="margin:8px 0;width:100%">
       <p class="muted">Se carregares um ficheiro à mão, a próxima atualização automática volta a usar a lista oficial.</p>
       <button class="red" id="ar-del">Apagar lista deste telemóvel</button>
+    </details>
+    <details style="margin-top:12px">
+      <summary class="muted">Avançado: serviço de envio por email deste telemóvel</summary>
+      <p class="muted">Para os emails saírem da tua própria conta Google, cria o teu serviço (ficheiro Codigo_Envio.gs) e cola aqui o endereço e a chave. Se deixares vazio, usa o serviço geral da app.</p>
+      <input type="text" id="cfg-url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" autocapitalize="off">
+      <input type="text" id="cfg-chave" placeholder="Chave (palavra-passe do serviço)" autocomplete="off" autocapitalize="off">
+      <button class="sec" id="cfg-save">Guardar</button>
     </details>
   </div>
 </section>
@@ -289,13 +300,68 @@ function converter(l) {
   if (base && /^\d{12}$/.test(base)) return base + checkDigit(base);
   return l;
 }
-function resolver(lido, usar) {
+// src: código a converter quando a etiqueta GS1-128 indica o GTIN do conteúdo (AI 02) e não o da caixa
+function resolver(lido, usar, src) {
   if (usar) return lido;
-  const conv = converter(lido);
+  const base = src || lido;
+  const conv = converter(base);
   let a = lookup(conv); if (a) return a.bar || conv;
   a = lookup(lido); if (a) return a.bar || lido;
   return conv;
 }
+
+/* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
+const GS = '\x1d';
+const AI_FIXOS = { '00': 18, '01': 14, '02': 14, '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6, '20': 2 };
+const AI_VAR = { '10': 20, '21': 20, '30': 8, '37': 8, '240': 30, '241': 30, '250': 30, '251': 30 };
+function parseGS1(raw) {
+  let s = String(raw == null ? '' : raw).replace(/^\][A-Za-z]\d/, '');
+  const out = {};
+  if (/^\(\d{2,4}\)/.test(s)) {               // com parênteses: (01)...(17)...
+    const re = /\((\d{2,4})\)([^(]*)/g; let m;
+    while ((m = re.exec(s))) out[m[1]] = m[2].replace(/[\x00-\x1f]/g, '').trim();
+    return out['01'] || out['02'] ? out : null;
+  }
+  s = s.replace(/[\x00-\x1c\x1e\x1f\x7f]/g, '').trim();   // mantém o separador GS (\x1d)
+  if (!(/^(01|02)\d{14}/.test(s) || /^00\d{18}/.test(s))) return null;
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === GS) { i++; continue; }
+    const a2 = s.substr(i, 2), a3 = s.substr(i, 3);
+    if (AI_FIXOS[a2]) { out[a2] = s.substr(i + 2, AI_FIXOS[a2]); i += 2 + AI_FIXOS[a2]; continue; }
+    if (AI_VAR[a2] || AI_VAR[a3]) {
+      const ai = AI_VAR[a2] ? a2 : a3, max = AI_VAR[ai], j = i + ai.length;
+      let fim = s.indexOf(GS, j);
+      if (fim < 0 || fim - j > max) fim = Math.min(s.length, j + max);
+      let v = s.slice(j, fim);
+      if (ai === '37' || ai === '30') { const mm = v.match(/^\d+/); v = mm ? mm[0] : ''; fim = j + v.length; }
+      out[ai] = v; i = fim; continue;
+    }
+    break;   // identificador que não conheço: pára (o que já foi lido mantém-se)
+  }
+  return out['01'] || out['02'] ? out : null;
+}
+function dataGS1(s) {
+  if (!/^\d{6}$/.test(s || '')) return null;
+  const y = 2000 + (+s.slice(0, 2)), m = +s.slice(2, 4); let d = +s.slice(4, 6);
+  if (m < 1 || m > 12) return null;
+  if (d === 0) d = new Date(y, m, 0).getDate();     // dia 00 = último dia do mês
+  const dt = new Date(y, m - 1, d);
+  return dt.getMonth() === m - 1 ? dt : null;
+}
+const diasAte = dt => { const h = new Date(); h.setHours(0, 0, 0, 0); return Math.round((dt - h) / 86400000); };
+const fmtData = dt => dt.toLocaleDateString('pt-PT');
+const isoData = dt => dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+function infoGS1(gs) {
+  if (!gs) return null;
+  let dt = null, tipo = '';
+  for (const [ai, t] of [['17', 'Validade'], ['15', 'Consumir de preferência até'], ['16', 'Vender até']]) {
+    const d = dataGS1(gs[ai]); if (d) { dt = d; tipo = t; break; }
+  }
+  const unid = parseFloat(gs['37'] || gs['30'] || '');
+  return { dt, tipo, lote: gs['10'] || '', unid: isNaN(unid) ? null : unid, contido: gs['02'] && (gs['37'] || gs['30']) ? gs['02'] : '' };
+}
+const limiteDias = () => { const n = parseInt($('#iv-dias').value, 10); return isNaN(n) ? 30 : n; };
 
 /* ---------- câmara ---------- */
 let camStream = null, camTimer = null;
@@ -394,6 +460,7 @@ function renderDocs() {
 function abrirDoc(id) {
   const d = docs.find(x => x.id === id) || docs[0];
   docId = d.id; leit = d.leit;
+  leit.forEach(l => { if (!l.id) l.id = novoId(); });   // leituras de versões anteriores não tinham identificador
   $('#iv-arm').value = d.arm || '';
   kvSet('docId', docId);
   ivFechar(); renderDocs(); resumo(); renderLeituras();
@@ -431,41 +498,69 @@ function resumo() {
   let s = 0; finais.forEach(v => s += v);
   $('#st-q').textContent = fmtQ(s);
 }
+const novoId = () => 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function mostrarGS1(g) {
+  const box = $('#iv-gs');
+  if (!g || (!g.dt && !g.lote && g.unid == null)) { box.hidden = true; box.innerHTML = ''; box.className = ''; return; }
+  const partes = []; let alerta = false;
+  if (g.dt) {
+    const dias = diasAte(g.dt), lim = limiteDias();
+    if (dias < 0) { alerta = true; partes.push('⛔ <b>VENCIDO há ' + (-dias) + ' dia(s)</b> (' + esc(g.tipo) + ' ' + fmtData(g.dt) + ')'); }
+    else if (dias < lim) { alerta = true; partes.push('⚠️ <b>VALIDADE CURTA: faltam ' + dias + ' dia(s)</b> (' + esc(g.tipo) + ' ' + fmtData(g.dt) + ')'); }
+    else partes.push(esc(g.tipo) + ': <b>' + fmtData(g.dt) + '</b> (faltam ' + dias + ' dias)');
+  }
+  if (g.lote) partes.push('Lote: <b>' + esc(g.lote) + '</b>');
+  if (g.unid != null) partes.push('Unidades na caixa: <b>' + fmtQ(g.unid) + '</b>');
+  box.className = alerta ? 'bad' : 'warn';
+  box.innerHTML = partes.join('<br>'); box.hidden = false;
+  if (alerta && navigator.vibrate) navigator.vibrate([200, 100, 200]);
+}
 function atualizarPainel(manterQtd) {
-  const fin = resolver(cur.lido, cur.usar);
+  const fin = resolver(cur.lido, cur.usar, cur.src);
   const a = lookup(fin);
   cur.final = fin; cur.desc = a ? a.desc : '';
   $('#iv-desc').innerHTML = a ? esc(a.desc) : '<span style="color:var(--er)">ARTIGO FORA DA LISTA</span>';
-  $('#iv-cod').innerHTML = 'Código guardado: <b>' + esc(fin) + '</b>' + (fin !== cur.lido ? ' (lido: ' + esc(cur.lido) + ')' : '');
-  const ex = cur.ex;
+  $('#iv-cod').innerHTML = 'Código guardado: <b>' + esc(fin) + '</b>' + (fin !== cur.lido ? ' (lido: ' + esc(cur.lido.length > 40 ? cur.lido.slice(0, 40) + '…' : cur.lido) + ')' : '');
+  // linhas já picadas deste artigo (várias linhas do mesmo código são permitidas)
+  const rel = leit.filter(l => l.final === fin || l.lido === cur.lido);
+  const ex = cur.entry || rel.slice().sort((x, y) => y.t - x.t)[0] || null;
+  cur.ex = ex;
+  const soma = rel.reduce((s, l) => s + l.qtd, 0);
   $('#iv-exist').hidden = !ex;
-  if (ex) $('#iv-exist').textContent = 'Já lido antes: quantidade ' + fmtQ(ex.qtd);
-  $('#iv-add').hidden = !ex;
+  if (ex) $('#iv-exist').textContent = 'Já picado: ' + rel.length + ' linha(s), total ' + fmtQ(soma) + ' · ' + (cur.entry ? 'a editar esta linha: ' : 'última linha: ') + fmtQ(ex.qtd);
+  $('#iv-save').textContent = ex ? (cur.entry ? '✏️ Alterar esta linha' : '✏️ Alterar a última linha') : 'Guardar';
+  $('#iv-add').hidden = !ex; $('#iv-new').hidden = !ex;
   $('#iv-usar').checked = cur.usar;
-  if (!manterQtd) $('#iv-qtd').value = ex ? fmtQ(ex.qtd) : '';
+  if (!manterQtd) $('#iv-qtd').value = cur.gs && cur.gs.unid != null ? fmtQ(cur.gs.unid) : (ex ? fmtQ(ex.qtd) : '');
 }
 function ivAbrir(raw, entry) {
   const lido = limpar(raw); if (!lido) return;
   irPara('inv'); ivSugestoes('');
-  const fin0 = resolver(lido, false);
-  const ex = entry || leit.find(l => l.lido === lido) || leit.find(l => l.final === fin0) || null;
-  cur = { lido, usar: ex && ex.lido === lido ? ex.usar : false, ex };
+  const gs = entry ? null : infoGS1(parseGS1(raw));
+  const mesmo = leit.filter(l => l.lido === lido).sort((x, y) => y.t - x.t)[0];
+  cur = { lido, usar: entry ? !!entry.usar : (mesmo ? !!mesmo.usar : false), entry: entry || null, src: gs && gs.contido ? '01' + gs.contido : '', gs, ex: null };
   $('#iv-panel').hidden = false;
+  mostrarGS1(gs);
   atualizarPainel(false);
   const q = $('#iv-qtd'); q.focus(); q.select();
 }
 function ivFechar() { $('#iv-panel').hidden = true; cur = null; $('#iv-in').value = ''; ivSugestoes(''); }
-async function ivGuardar(somar) {
+// modo: 'subst' (altera a linha existente, ou cria se for novo), 'somar' (soma à linha existente) ou 'nova' (deixa as outras como estão)
+async function ivGuardar(modo) {
   if (!cur) return;
-  const txt = $('#iv-qtd').value.trim().replace(',', '.');
-  const q = parseFloat(txt);
+  const q = parseFloat($('#iv-qtd').value.trim().replace(',', '.'));
   if (isNaN(q) || q < 0) { toast('Escreve uma quantidade válida.'); return; }
-  const qtd = somar && cur.ex ? cur.ex.qtd + q : q;
-  leit = leit.filter(l => l.lido !== cur.lido && l.final !== cur.final && l !== cur.ex);
-  leit.push({ lido: cur.lido, usar: cur.usar, final: cur.final, desc: cur.desc, qtd, t: Date.now() });
+  const ex = cur.ex, val = cur.gs && cur.gs.dt ? isoData(cur.gs.dt) : null;
+  let qtd = q;
+  if (modo === 'nova' || !ex) leit.push({ id: novoId(), lido: cur.lido, usar: cur.usar, final: cur.final, desc: cur.desc, qtd, val, t: Date.now() });
+  else {
+    qtd = modo === 'somar' ? ex.qtd + q : q;
+    Object.assign(ex, { lido: cur.lido, usar: cur.usar, final: cur.final, desc: cur.desc, qtd, t: Date.now() });
+    if (val) ex.val = val;
+  }
   const nome = cur.desc || cur.final;
   ivFechar(); resumo();
-  toast('✔ ' + nome + ': ' + fmtQ(qtd));
+  toast('✔ ' + nome + ': ' + fmtQ(qtd) + (modo === 'nova' && ex ? ' (nova linha)' : ''));
   const gravar = salvarLeit();
   if ($('#iv-cont').checked) ivCamera(); else $('#iv-in').focus();
   await gravar;
@@ -495,10 +590,12 @@ $('#iv-in').addEventListener('keydown', e => {
   else ivAbrir(e.target.value);
 });
 $('#iv-usar').addEventListener('change', e => { if (cur) { cur.usar = e.target.checked; atualizarPainel(true); } });
-$('#iv-save').addEventListener('click', () => ivGuardar(false));
-$('#iv-add').addEventListener('click', () => ivGuardar(true));
+$('#iv-save').addEventListener('click', () => ivGuardar('subst'));
+$('#iv-add').addEventListener('click', () => ivGuardar('somar'));
+$('#iv-new').addEventListener('click', () => ivGuardar('nova'));
 $('#iv-cancel').addEventListener('click', ivFechar);
-$('#iv-qtd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivGuardar(false); } });
+$('#iv-qtd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivGuardar('subst'); } });
+$('#iv-dias').addEventListener('input', e => { kvSet('avisoDias', e.target.value.trim()); if (cur && cur.gs) mostrarGS1(cur.gs); });
 $('#iv-arm').addEventListener('input', e => { const d = docAtual(); if (d) { d.arm = e.target.value.trim(); kvSet('docs', docs); } });
 
 /* ---------- LEITURAS e exportação ---------- */
@@ -506,16 +603,16 @@ function renderLeituras() {
   const f = norm($('#lt-f').value);
   const lista = leit.slice().sort((a, b) => b.t - a.t).filter(l => !f || norm(l.desc + ' ' + l.final + ' ' + l.lido).includes(f));
   $('#lt-list').innerHTML = lista.length ? lista.slice(0, 500).map(l =>
-    '<div class="item click" data-l="' + esc(l.lido) + '"><div class="t"><b>' + (l.desc ? esc(l.desc) : '<span style="color:var(--er)">FORA DA LISTA</span>') + '</b><span class="muted">' + esc(l.final) + '</span></div>' +
-    '<div class="q">' + fmtQ(l.qtd) + '</div><button class="red" data-del="' + esc(l.lido) + '">✕</button></div>').join('') +
+    '<div class="item click" data-l="' + esc(l.id) + '"><div class="t"><b>' + (l.desc ? esc(l.desc) : '<span style="color:var(--er)">FORA DA LISTA</span>') + '</b><span class="muted">' + esc(l.final) + (l.val ? ' · val. ' + fmtData(new Date(l.val + 'T00:00:00')) : '') + '</span></div>' +
+    '<div class="q">' + fmtQ(l.qtd) + '</div><button class="red" data-del="' + esc(l.id) + '">✕</button></div>').join('') +
     (lista.length > 500 ? '<div class="muted" style="padding:8px">A mostrar 500 de ' + lista.length + '. Usa o filtro.</div>' : '')
     : '<div class="muted" style="padding:12px">Sem leituras.</div>';
 }
 $('#lt-f').addEventListener('input', renderLeituras);
 $('#lt-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-del]');
-  if (del) { e.stopPropagation(); leit = leit.filter(l => l.lido !== del.dataset.del); await salvarLeit(); resumo(); renderLeituras(); return; }
-  const it = e.target.closest('.item'); if (it) ivAbrir(it.dataset.l, leit.find(l => l.lido === it.dataset.l));
+  if (del) { e.stopPropagation(); leit = leit.filter(l => l.id !== del.dataset.del); await salvarLeit(); resumo(); renderLeituras(); return; }
+  const it = e.target.closest('.item'); if (it) { const ent = leit.find(l => l.id === it.dataset.l); if (ent) ivAbrir(ent.lido, ent); }
 });
 $('#lt-clear').addEventListener('click', async () => {
   if (!leit.length) return;
@@ -544,32 +641,45 @@ function prepararExport() {
   return { texto, nome: nomePlt(arm, doc.nome), assunto: doc.nome + ' (armazém ' + arm + ')', linhas: texto.split('\r\n').filter(Boolean).length, doc: doc.nome };
 }
 function transferir(texto, nome) {
-  const url = URL.createObjectURL(new Blob([texto], { type: 'text/plain' }));
+  // octet-stream (e não text/plain) para o Android não acrescentar ".txt" ao nome do ficheiro
+  const url = URL.createObjectURL(new Blob([texto], { type: 'application/octet-stream' }));
   const a = document.createElement('a'); a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 $('#ex-down').addEventListener('click', () => { const x = prepararExport(); if (x) { transferir(x.texto, x.nome); marcarExportado(); } });
+// Partilhar / usar o meu email: abre o "partilhar" do Android (Gmail, WhatsApp...) com o ficheiro anexado.
+// Se o Chrome não deixar partilhar ficheiros .plt, transfere o ficheiro e abre o email com destinatário e assunto.
 $('#ex-share').addEventListener('click', async () => {
   const x = prepararExport(); if (!x) return;
-  const file = new File([x.texto], x.nome, { type: 'text/plain' });
+  const para = $('#ex-email').value.trim();
+  const file = new File([x.texto], x.nome, { type: 'application/octet-stream' });
   try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: x.nome, text: x.assunto }); marcarExportado(); }
-    else { transferir(x.texto, x.nome); marcarExportado(); toast('Partilha não disponível neste aparelho: o ficheiro foi transferido.', 4000); }
-  } catch (e) { if (e.name !== 'AbortError') { transferir(x.texto, x.nome); marcarExportado(); toast('Não foi possível partilhar: o ficheiro foi transferido.', 4000); } }
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: x.assunto, text: x.assunto }); marcarExportado(); return; }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  transferir(x.texto, x.nome); marcarExportado();
+  toast('Ficheiro guardado em Transferências. Anexa-o ao email.', 6000);
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(para)) {
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = 'mailto:' + para + '?subject=' + encodeURIComponent(x.assunto) + '&body=' + encodeURIComponent('Segue em anexo o ficheiro ' + x.nome + '.');
+      document.body.appendChild(a); a.click(); a.remove();
+    }, 1200);
+  }
 });
 // Envio direto por email para o endereço escrito na hora (precisa do serviço de envio configurado em config.js)
 $('#ex-mail').addEventListener('click', async () => {
   const x = prepararExport(); if (!x) return;
   const para = $('#ex-email').value.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(para)) { toast('Escreve um endereço de email válido.', 3500); $('#ex-email').focus(); return; }
-  if (typeof ENVIO_URL === 'undefined' || !ENVIO_URL) { toast('O envio por email ainda não está configurado. Usa Partilhar ou Transferir.', 5000); return; }
+  const cfg = envioCfg();
+  if (!cfg.url) { toast('O envio por email ainda não está configurado. Usa "Partilhar / meu email" ou Transferir.', 5000); return; }
   if (!confirm('Enviar "' + x.doc + '" (' + x.linhas + ' linhas) para ' + para + '?')) return;
   kvSet('email', para);
   const b = $('#ex-mail'); b.disabled = true; toast('A enviar...', 15000);
   try {
-    const r = await fetch(ENVIO_URL, {
+    const r = await fetch(cfg.url, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ chave: typeof ENVIO_CHAVE === 'undefined' ? '' : ENVIO_CHAVE, para, nome: x.nome, assunto: x.assunto, texto: x.texto, linhas: x.linhas })
+      body: JSON.stringify({ chave: cfg.chave, para, nome: x.nome, assunto: x.assunto, texto: x.texto, linhas: x.linhas })
     });
     const j = await r.json();
     if (!j.ok) throw new Error(j.erro || 'o serviço recusou o envio');
@@ -578,6 +688,18 @@ $('#ex-mail').addEventListener('click', async () => {
     toast('Não consegui confirmar o envio (' + e.message + '). Antes de tentar de novo, vê se o email chegou.', 8000);
   }
   b.disabled = false;
+});
+
+/* ---------- serviço de envio (o geral do config.js, ou o próprio deste telemóvel) ---------- */
+let envioProprio = { url: '', chave: '' };
+function envioCfg() {
+  if (envioProprio.url) return envioProprio;
+  return { url: typeof ENVIO_URL === 'undefined' ? '' : ENVIO_URL, chave: typeof ENVIO_CHAVE === 'undefined' ? '' : ENVIO_CHAVE };
+}
+$('#cfg-save').addEventListener('click', async () => {
+  envioProprio = { url: $('#cfg-url').value.trim(), chave: $('#cfg-chave').value.trim() };
+  await kvSet('envioUrl', envioProprio.url); await kvSet('envioChave', envioProprio.chave);
+  toast(envioProprio.url ? '✔ Vai usar o teu serviço de envio.' : 'Vai usar o serviço geral da app.');
 });
 
 /* ---------- ARTIGOS (carregar CSV) ---------- */
@@ -651,6 +773,9 @@ $('#ar-upd').addEventListener('click', async () => {
     const guardado = await kvGet('docId');
     abrirDoc(docs.some(d => d.id === guardado) ? guardado : docs[0].id);
     $('#ex-email').value = (await kvGet('email')) || '';
+    envioProprio = { url: (await kvGet('envioUrl')) || '', chave: (await kvGet('envioChave')) || '' };
+    $('#cfg-url').value = envioProprio.url; $('#cfg-chave').value = envioProprio.chave;
+    $('#iv-dias').value = (await kvGet('avisoDias')) || '30';
   } catch (e) { toast('Aviso: armazenamento local indisponível (' + e.message + ')', 5000); }
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => { });
