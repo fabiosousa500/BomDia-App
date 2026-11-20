@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>POS de emergência · Bom Dia São Jorge</title>
+<link rel="icon" href="icon-192.png">
+<style>
+  :root{--ye:#FEC400;--bk:#000;--az:#0b3d91;--cz:#667;--er:#b00020;--ok:#1b6b2f;--am:#fff3cd}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:#eef0f4;color:#111}
+  header{background:#000;color:var(--ye);display:flex;align-items:center;gap:16px;padding:8px 16px}
+  header img{height:38px}
+  header b{font-size:18px;color:#fff}
+  header small{color:#d9b100}
+  header{flex-wrap:wrap}
+  nav{display:flex;background:#fff;border-bottom:1px solid #ccd}
+  nav button{flex:0 0 auto;background:none;border:0;border-bottom:4px solid transparent;padding:12px 22px;font-size:16px;cursor:pointer}
+  nav button.on{border-color:var(--ye);font-weight:bold}
+  button{font-size:16px;border:0;border-radius:8px;padding:10px 14px;cursor:pointer}
+  button.pri{background:var(--ye);color:#111;font-weight:bold}
+  button.sec{background:#e3e7ee;color:#222}
+  button.red{background:#fde7e7;color:var(--er)}
+  button:disabled{opacity:.5}
+  input,select{font-size:17px;padding:9px;border:1px solid #bbb;border-radius:8px;background:#fff;font-family:inherit}
+  label{font-size:13px;color:var(--cz);display:block;margin-top:8px}
+  section{display:none;padding:12px 16px}
+  section.on{display:block}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px;align-items:start}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px #0002}
+  #cod{width:100%;font-size:24px;padding:12px;border:2px solid var(--ye)}
+  table{width:100%;border-collapse:collapse;background:#fff}
+  th{font-size:12px;color:var(--cz);text-align:left;padding:6px;border-bottom:2px solid #ddd}
+  td{padding:5px 6px;border-bottom:1px solid #eee;vertical-align:middle}
+  td input[type=text]{width:90px;text-align:right;padding:6px}
+  td .desc{font-weight:bold}
+  td .cd{font-size:12px;color:var(--cz)}
+  tr.flash{background:#fff7d6}
+  .num{text-align:right}
+  .tot{font-size:40px;font-weight:bold;color:var(--az);text-align:right}
+  .linha{display:flex;justify-content:space-between;padding:3px 0}
+  .troco{font-size:30px;font-weight:bold;color:var(--ok);text-align:right}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row>*{flex:1}
+  .muted{color:var(--cz);font-size:14px}
+  .bad{background:#fde7e7;color:var(--er);padding:8px;border-radius:6px;font-weight:bold}
+  #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;background:#222;color:#fff;padding:12px 18px;border-radius:8px;z-index:90;display:none}
+  .modal{position:fixed;inset:0;background:#000a;z-index:60;display:none;align-items:center;justify-content:center;padding:20px}
+  .modal.on{display:flex}
+  .modal .box{background:#fff;border-radius:14px;padding:18px;width:100%;max-width:560px;max-height:90vh;overflow:auto;border-top:6px solid var(--ye)}
+  .modal h3{margin:0 0 8px}
+  #pq-res .it{display:flex;justify-content:space-between;gap:10px;padding:9px;border-bottom:1px solid #eee;cursor:pointer}
+  #pq-res .it.sel,#pq-res .it:hover{background:#fff3cd}
+  #dlg p{white-space:pre-wrap}
+  .loading{position:fixed;inset:0;background:#fffc;z-index:95;display:none;align-items:center;justify-content:center;font-size:20px}
+  .cancelada{color:var(--er);text-decoration:line-through}
+  [hidden]{display:none!important}
+  @media print{
+    body.rec-aberto > *:not(#recibo){display:none!important}
+    body.rec-aberto #recibo{position:static;background:#fff;display:block;padding:0}
+    body.rec-aberto #recibo .box{border:0;max-width:none;box-shadow:none}
+    body.rec-aberto #recibo .nao-imprimir{display:none}
+  }
+</style>
+</head>
+<body>
+<header><img src="logo.png" alt="Bom Dia São Jorge"><b>POS de emergência</b><button id="b-pasta" class="sec" style="margin-left:auto;background:#222;font-size:13px;padding:6px 10px">💾</button><small id="hd-info" style="margin-left:0">sem artigos carregados</small></header>
+<nav>
+  <button data-t="venda" class="on">🛒 Venda</button>
+  <button data-t="vendas">📋 Vendas guardadas</button>
+</nav>
+
+<section id="venda" class="on">
+ <div class="grid">
+  <div>
+    <div class="row" style="margin-bottom:10px">
+      <input type="text" id="cod" placeholder="Bipa o código, ou escreve código / nome e Enter" autocomplete="off" autocapitalize="off" style="flex:5">
+      <button class="sec" id="b-pesq" style="flex:1">🔍 Pesquisar (F2)</button>
+      <button class="sec" id="b-livre" style="flex:1">➕ Artigo livre</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table>
+        <thead><tr><th>Artigo</th><th class="num">Qtd</th><th class="num">Preço</th><th class="num">Total</th><th title="Soma taxa Volta">♻️</th><th></th></tr></thead>
+        <tbody id="lin"></tbody>
+      </table>
+      <div id="vazio" class="muted" style="padding:20px;text-align:center">Sem artigos. Bipa um código para começar.</div>
+    </div>
+    <p class="muted">Enter no código adiciona o artigo; Enter na quantidade volta ao código. O mesmo artigo bipado outra vez soma 1 à quantidade. Etiquetas de balança (27 e 29) criam uma linha nova.</p>
+  </div>
+
+  <div class="card">
+    <div class="linha"><span>Subtotal</span><b id="t-sub">0,00 €</b></div>
+    <div class="linha"><span>♻️ Taxa Volta <small id="t-un" class="muted"></small></span><b id="t-taxa">0,00 €</b></div>
+    <div class="row" style="align-items:end">
+      <div><label>Taxa Volta por unidade (€)</label><input type="text" id="taxaval" inputmode="decimal" style="width:100%"></div>
+      <div><label>Unidades extra de taxa</label><input type="text" id="extra" inputmode="numeric" value="0" style="width:100%"></div>
+    </div>
+    <div class="tot" id="t-total">0,00 €</div>
+
+    <label>Pagamento</label>
+    <select id="pag" style="width:100%"><option>Dinheiro</option><option>Cartão multibanco</option><option>Cheque</option></select>
+    <div id="bx-din">
+      <label>Valor recebido (€)</label>
+      <input type="text" id="rec" inputmode="decimal" style="width:100%" autocomplete="off">
+      <div class="row" style="margin-top:6px" id="notas">
+        <button class="sec" data-v="exato">Exato</button><button class="sec" data-v="5">5</button><button class="sec" data-v="10">10</button><button class="sec" data-v="20">20</button><button class="sec" data-v="50">50</button>
+      </div>
+      <div class="linha" style="margin-top:6px"><span>Troco</span></div>
+      <div class="troco" id="troco">0,00 €</div>
+    </div>
+    <label>Número do cartão de cliente</label>
+    <input type="text" id="cartao" style="width:100%" autocomplete="off">
+    <label>Tipo de documento</label>
+    <select id="doc" style="width:100%"><option>Fatura simplificada</option><option>Fatura</option><option>Fatura recibo</option><option>Guia</option></select>
+    <label>Observações (nome do cliente ou contribuinte)</label>
+    <input type="text" id="obs" style="width:100%" autocomplete="off">
+    <div class="row" style="margin-top:14px">
+      <button class="red" id="b-canc">Cancelar venda</button>
+      <button class="pri" id="b-fim" style="flex:2;font-size:20px;padding:14px">Finalizar (F9)</button>
+    </div>
+  </div>
+ </div>
+</section>
+
+<section id="vendas">
+  <div class="row" style="align-items:end;margin-bottom:10px">
+    <div style="flex:0 0 200px"><label>Dia</label><input type="date" id="vd-dia" style="width:100%"></div>
+    <button class="pri" id="vd-exp-dia" style="flex:0 0 auto">📥 Exportar o dia (Excel)</button>
+    <button class="sec" id="vd-exp-tudo" style="flex:0 0 auto">📥 Exportar todas (Excel)</button>
+    <span class="muted" style="flex:2" id="vd-info"></span>
+  </div>
+  <div class="card" style="padding:0;overflow:auto">
+    <table><thead><tr><th>N.º</th><th>Hora</th><th>Documento</th><th>Pagamento</th><th class="num">Total</th><th>Observações</th></tr></thead><tbody id="vd-list"></tbody></table>
+    <div id="vd-vazio" class="muted" style="padding:20px;text-align:center">Sem vendas neste dia.</div>
+  </div>
+  <div class="card" style="margin-top:12px" id="vd-resumo"></div>
+  <p class="muted">Cada venda fica guardada no computador assim que a finalizas. Exporta para Excel no fim do dia e guarda o ficheiro noutro sítio.</p>
+</section>
+
+<div class="modal" id="pq"><div class="box">
+  <h3>Pesquisar artigo</h3>
+  <div class="row"><input type="text" id="pq-in" placeholder="Nome, código de barras ou código artigo" autocomplete="off" style="flex:3"><select id="pq-modo" style="flex:2"><option value="contem">Contém</option><option value="comeca">Começa por</option><option value="termina">Termina em</option><option value="igual">Igual a</option></select></div>
+  <div id="pq-res" style="margin-top:8px"></div>
+  <div class="row" style="margin-top:10px"><button class="sec" id="pq-x">Fechar (Esc)</button></div>
+</div></div>
+
+<div class="modal" id="recibo"><div class="box">
+  <div id="rec-corpo"></div>
+  <div class="row nao-imprimir" style="margin-top:12px"><button class="sec" id="rec-print">🖨️ Imprimir</button><button class="red" id="rec-anular" hidden>Anular venda</button><button class="pri" id="rec-ok">Nova venda (Enter)</button></div>
+</div></div>
+
+<div class="modal" id="dlg" style="z-index:70"><div class="box"><h3>Bom Dia São Jorge</h3><p id="dlg-m"></p><input type="text" id="dlg-i" autocomplete="off" style="width:100%"><div class="row" style="margin-top:10px"><button class="sec" id="dlg-c">Cancelar</button><button class="pri" id="dlg-ok">OK</button></div></div></div>
+
+<div id="toast"></div>
+<div class="loading" id="loading">A carregar artigos...</div>
+
+<script src="config.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+/* ---------- armazenamento (IndexedDB) ---------- */
+let _db;
+function db() {
+  if (_db) return Promise.resolve(_db);
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('leitor', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => { _db = r.result; res(_db); };
+    r.onerror = () => rej(r.error);
+  });
+}
+async function kvGet(k) {
+  const d = await db();
+  return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+}
+async function kvSet(k, v) {
+  const d = await db();
+  return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+}
+async function kvDel(k) {
+  const d = await db();
+  return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').delete(k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+}
+
+function toast(t, ms) {
+  const e = $('#toast'); e.textContent = t; e.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(() => e.style.display = 'none', ms || 2800);
+}
+
+/* ---------- CSV ---------- */
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const first = text.split(/\r?\n/, 1)[0];
+  let d = ',', best = -1;
+  for (const x of [';', ',', '\t']) { const c = first.split(x).length; if (c > best) { best = c; d = x; } }
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === d) { row.push(cur); cur = ''; }
+    else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+    else if (ch === '\r') { }
+    else cur += ch;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+
+/* ---------- artigos ---------- */
+let artigos = [], idxBar = new Map(), idxCod = new Map(), idxBar0 = new Map(), idxCod0 = new Map();
+const strip0 = s => s.replace(/^0+/, '');
+
+function construirArtigos(rows) {
+  if (!rows.length) return [];
+  const h = rows[0].map(norm);
+  const find = (fn, def) => { const i = h.findIndex(fn); return i >= 0 ? i : def; };
+  const cBar = find(x => x.includes('barras'), 0);
+  const cCod = find(x => x.includes('artigo') && x.includes('cod'), 1);
+  const cDes = find(x => x.includes('descri'), 2);
+  const cPre = find(x => x.startsWith('preco'), 3);
+  const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const desc = (r[cDes] || '').trim();
+    const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
+    if (!desc && !bar && !cod) continue;
+    const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+  }
+  return out;
+}
+function indexar() {
+  idxBar = new Map(); idxCod = new Map(); idxBar0 = new Map(); idxCod0 = new Map();
+  artigos.forEach((a, i) => {
+    if (a.b === undefined) { a.b = (a.bar || '').toLowerCase(); a.c = (a.cod || '').toLowerCase(); }
+    if (a.bar) { if (!idxBar.has(a.bar)) idxBar.set(a.bar, i); const s = strip0(a.bar); if (s && !idxBar0.has(s)) idxBar0.set(s, i); }
+    if (a.cod) { if (!idxCod.has(a.cod)) idxCod.set(a.cod, i); const s = strip0(a.cod); if (s && !idxCod0.has(s)) idxCod0.set(s, i); }
+  });
+  $('#hd-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados';
+}
+function lookup(c) {
+  if (!c) return null;
+  let i = idxBar.get(c);
+  if (i == null) i = idxCod.get(c);
+  if (i == null) { i = idxBar.get(c.toUpperCase()); if (i == null) i = idxCod.get(c.toUpperCase()); if (i == null) i = idxCod.get(c.toLowerCase()); }
+  if (i == null) { const s = strip0(c); if (s) { i = idxBar0.get(s); if (i == null) i = idxCod0.get(s); } }
+  return i == null ? null : artigos[i];
+}
+function numPT(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return 0; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) || n < 0 ? 0 : n; }
+const eur = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+function depTexto(a, q) { return a && a.dep > 0 ? '♻️ Depósito Volta: ' + eur(a.dep) + ' por unidade' + (q > 0 ? ' · ' + fmtQ(q) + ' un. = ' + eur(a.dep * q) : '') : ''; }
+function fmtPreco(p) {
+  let s = String(p).replace(/[\s€]/g, '');
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? String(p) : n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+// Pesquisa por descrição (conforme o modo) e também por parte do código de barras ou do código artigo.
+function pesquisarNome(txt, modo, limite) {
+  const t = norm(txt); if (t.length < 2) return [];
+  const pal = t.split(/\s+/);
+  const nomes = [], iniciam = [], contem = [];
+  for (const a of artigos) {
+    let ok = false;
+    if (modo === 'contem') ok = pal.every(p => a.n.includes(p));
+    else if (modo === 'comeca') ok = a.n.startsWith(t);
+    else if (modo === 'termina') ok = a.n.endsWith(t);
+    else ok = a.n === t;
+    if (ok) nomes.push(a);
+    if (!/\s/.test(t) || /[0-9]/.test(t)) {   // o texto pode ser (parte de) um código
+      const tc = t.replace(/\s+/g, '');
+      if (a.b.startsWith(tc) || a.c.startsWith(tc)) iniciam.push(a);
+      else if (a.b.includes(tc) || a.c.includes(tc)) contem.push(a);
+    }
+  }
+  const soNumeros = /^[\d\s-]+$/.test(t);
+  const todos = soNumeros ? iniciam.concat(contem, nomes) : nomes.concat(iniciam, contem);
+  const vistos = new Set(), out = [];
+  for (const a of todos) { if (!vistos.has(a)) { vistos.add(a); out.push(a); if (out.length >= limite) break; } }
+  return out;
+}
+
+
+function limpar(raw) { return String(raw == null ? '' : raw).replace(/^\][A-Za-z]\d/, '').replace(/[\x00-\x1f\x7f]/g, '').trim(); }
+function checkDigit(b12) { let s = 0; for (let i = 0; i < 12; i++) s += (+b12[i]) * (i % 2 ? 3 : 1); return (10 - s % 10) % 10; }
+function converter(l) {
+  let base = null;
+  if (l.length === 13) return l;
+  if (l.startsWith('(01)')) base = l.substr(5, 12);
+  else if (l.startsWith('01') && l.length >= 16) base = l.substr(3, 12);
+  else if (l.length === 14 && /^\d+$/.test(l)) base = l.substr(1, 12);
+  if (base && /^\d{12}$/.test(base)) return base + checkDigit(base);
+  return l;
+}
+
+/* ---------- etiquetas de balança: 29 = peso (kg), 27 = preço ---------- */
+// 29 + 5 dígitos do artigo + 2 inteiros + 3 decimais (kg) + controlo   |   27 + 5 dígitos do artigo + 3 inteiros + 2 decimais (€) + controlo
+function parseBalanca(raw) {
+  const m = String(raw == null ? '' : raw).replace(/\s+/g, '').match(/^(27|29)(\d{5})(\d{5})\d$/);
+  if (!m) return null;
+  const peso = m[1] === '29', v = parseInt(m[3], 10);
+  return { tipo: peso ? 'peso' : 'preco', art: m[2], valor: peso ? v / 1000 : v / 100 };
+}
+// quantidade em kg (3 casas): ao peso é a da etiqueta; ao preço é preço da etiqueta ÷ preço por kg do ficheiro
+function qtdBalanca(b, a) {
+  const pk = a ? numPT(a.preco) : 0;
+  if (b.tipo === 'peso') return { kg: Math.round(b.valor * 1000) / 1000, total: pk > 0 ? b.valor * pk : null, pk, semPreco: false };
+  if (!(pk > 0)) return { kg: null, total: b.valor, pk: 0, semPreco: true };
+  return { kg: Math.round(b.valor / pk * 1000) / 1000, total: b.valor, pk, semPreco: false };
+}
+function textoBalanca(b, q) {
+  if (b.tipo === 'peso') return '⚖️ Etiqueta ao peso: <b>' + fmtQ(q.kg) + ' kg</b>' + (q.total != null ? ' · total ' + eur(q.total) : '');
+  return '🏷️ Etiqueta ao preço: <b>' + eur(b.valor) + '</b>' + (q.semPreco ? '' : ' → <b>' + fmtQ(q.kg) + ' kg</b> (' + eur(b.valor) + ' ÷ ' + eur(q.pk) + '/kg)');
+}
+/* ---------- janelas da app (em vez das caixas do navegador) ---------- */
+// dlg(texto) -> true/false ; dlg(texto, valorInicial) -> texto escrito ou null
+function dlg(msg, valor) {
+  return new Promise(res => {
+    const d = $('#dlg'), i = $('#dlg-i'), pedir = valor !== undefined;
+    $('#dlg-m').textContent = msg; i.hidden = !pedir; i.value = pedir ? valor : '';
+    d.classList.add('on'); if (pedir) { i.focus(); i.select(); } else $('#dlg-ok').focus();
+    const fim = r => { d.classList.remove('on'); $('#dlg-ok').onclick = $('#dlg-c').onclick = i.onkeydown = null; res(r); };
+    $('#dlg-ok').onclick = () => fim(pedir ? i.value : true);
+    $('#dlg-c').onclick = () => fim(pedir ? null : false);
+    i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); fim(i.value); } };
+  });
+}
+
+
+/* ================= POS de emergência ================= */
+const fmtQ = n => String(Math.round(n * 1000) / 1000).replace('.', ',');
+const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+const r3 = n => Math.round((n + Number.EPSILON) * 1000) / 1000;
+const novoId = () => 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const pad = n => String(n).padStart(8, '0');
+const p2 = n => String(n).padStart(2, '0');
+const dataStr = t => { const d = new Date(t); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+const horaStr = t => { const d = new Date(t); return p2(d.getHours()) + ':' + p2(d.getMinutes()); };
+const dataPT = t => { const d = new Date(t); return p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear(); };
+
+/* ---- armazenamento extra (mesma base de dados da app: artigos e marcações Volta partilhados) ---- */
+async function kvPV() {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const out = [];
+    const q = d.transaction('kv').objectStore('kv').openCursor(IDBKeyRange.bound('pv_', 'pv_￿'));
+    q.onsuccess = () => { const c = q.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
+    q.onerror = () => rej(q.error);
+  });
+}
+async function kvKeysPV() {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const q = d.transaction('kv').objectStore('kv').getAllKeys(IDBKeyRange.bound('pv_', 'pv_￿'));
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+  });
+}
+
+/* ---- lista de artigos ---- */
+function infoArtigos() { $('#hd-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados'; }
+function hashTexto(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + '-' + s.length; }
+async function atualizarLista() {
+  if (typeof LISTA_URL === 'undefined' || !LISTA_URL) return false;
+  try {
+    const r = await fetch(LISTA_URL, { cache: 'no-cache' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const txt = await r.text(), h = hashTexto(txt);
+    if (artigos.length && h === (await kvGet('listaHash'))) return true;
+    const novos = construirArtigos(parseCSV(txt));
+    if (!novos.length) throw new Error('lista vazia');
+    artigos = novos; indexar();
+    await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvSet('listaHash', h);
+    infoArtigos(); toast('✔ Lista atualizada: ' + artigos.length.toLocaleString('pt-PT') + ' artigos');
+    return true;
+  } catch (e) {
+    if (!artigos.length) toast('Não consegui carregar a lista (' + e.message + '). Liga-te à internet e recarrega.', 6000);
+    return false;
+  }
+}
+
+/* ---- estado da venda ---- */
+let voltaSet = new Set(), codTaxa = 'VALOR DEPOSITO', taxaVal = 0.10, venda = novaVenda();
+const isVolta = c => voltaSet.has(c);
+function novaVenda() { return { lin: [], pag: 'Dinheiro', rec: '', cartao: '', doc: 'Fatura simplificada', obs: '', extra: 0 }; }
+const guardarRascunho = () => kvSet('pos_rascunho', venda).catch(() => { });
+
+function totais() {
+  const sub = r2(venda.lin.reduce((s, l) => s + l.total, 0));
+  const un = r3(venda.lin.reduce((s, l) => s + (l.volta ? l.qtd : 0), 0) + (parseFloat(venda.extra) || 0));
+  const taxa = r2(un * taxaVal);
+  return { sub, un, taxa, total: r2(sub + taxa) };
+}
+
+/* ---- linhas ---- */
+function addArtigo(a, qtd) {
+  const cod = a.bar || a.cod, pu = numPT(a.preco);
+  const ex = venda.lin.find(l => l.cod === cod && !l.bal);
+  if (ex) { ex.qtd = r3(ex.qtd + qtd); ex.total = r2(ex.qtd * ex.pu); return ex; }
+  const l = { id: novoId(), cod, desc: a.desc, qtd, pu, total: r2(qtd * pu), volta: isVolta(cod), bal: null };
+  venda.lin.push(l); return l;
+}
+function addBalanca(b, a) {
+  const pk = numPT(a.preco), cod = a.bar || a.cod || b.art;
+  const l = { id: novoId(), cod, desc: a.desc, qtd: 1, pu: pk, total: 0, volta: isVolta(cod), bal: b.tipo };
+  if (b.tipo === 'peso') { l.qtd = r3(b.valor); l.total = r2(l.qtd * pk); }
+  else if (pk > 0) { l.total = r2(b.valor); l.qtd = r3(b.valor / pk); }
+  else { l.qtd = 1; l.pu = b.valor; l.total = r2(b.valor); }
+  venda.lin.push(l); return l;
+}
+
+/* ---- apresentação ---- */
+let ultimaLinha = null;
+function render() {
+  const T = totais();
+  $('#lin').innerHTML = venda.lin.map(l => '<tr data-id="' + l.id + '"' + (l.id === ultimaLinha ? ' class="flash"' : '') + '>' +
+    '<td><div class="desc">' + esc(l.desc) + '</div><div class="cd">' + esc(l.cod) + (l.bal === 'peso' ? ' · ⚖️ ao peso' : l.bal === 'preco' ? ' · 🏷️ ao preço' : '') + '</div></td>' +
+    '<td class="num"><input type="text" data-f="qtd" inputmode="decimal" value="' + fmtQ(l.qtd) + '"></td>' +
+    '<td class="num"><input type="text" data-f="pu" inputmode="decimal" value="' + r2(l.pu).toFixed(2).replace('.', ',') + '"></td>' +
+    '<td class="num"><input type="text" data-f="total" inputmode="decimal" value="' + r2(l.total).toFixed(2).replace('.', ',') + '"></td>' +
+    '<td><input type="checkbox" data-f="volta" title="Soma a taxa Volta"' + (l.volta ? ' checked' : '') + '></td>' +
+    '<td><button class="red" data-del="1">✕</button></td></tr>').join('');
+  $('#vazio').hidden = venda.lin.length > 0;
+  $('#t-sub').textContent = eur(T.sub);
+  $('#t-taxa').textContent = eur(T.taxa);
+  $('#t-un').textContent = T.un > 0 ? '(' + fmtQ(T.un) + ' un. × ' + eur(taxaVal) + ')' : '';
+  $('#t-total').textContent = eur(T.total);
+  $('#bx-din').hidden = venda.pag !== 'Dinheiro';
+  const rec = numPT(venda.rec);
+  $('#troco').textContent = venda.rec === '' ? eur(0) : (rec >= T.total ? eur(r2(rec - T.total)) : 'Faltam ' + eur(r2(T.total - rec)));
+  $('#troco').style.color = venda.rec !== '' && rec < T.total ? 'var(--er)' : 'var(--ok)';
+}
+function focoCod() { const c = $('#cod'); c.focus(); c.select(); }
+function focoQtd(id) { const i = document.querySelector('tr[data-id="' + id + '"] input[data-f=qtd]'); if (i) { i.focus(); i.select(); } else focoCod(); }
+function alterou() { render(); guardarRascunho(); }
+
+/* ---- entrada de código ---- */
+function processar(txt) {
+  const t = limpar(txt); if (!t) return;
+  const bal = parseBalanca(t);
+  if (bal) {
+    const a = lookup(bal.art);
+    if (!a) { toast('Etiqueta de balança: artigo ' + bal.art + ' não encontrado na lista.', 4000); return; }
+    const l = addBalanca(bal, a); ultimaLinha = l.id; $('#cod').value = ''; alterou(); focoQtd(l.id);
+    if (!numPT(a.preco)) toast('Sem preço por kg no ficheiro: confirma o preço e a quantidade.', 4500);
+    return;
+  }
+  const a = lookup(t) || lookup(converter(t));
+  if (a) {
+    const l = addArtigo(a, 1); ultimaLinha = l.id; $('#cod').value = ''; alterou(); focoQtd(l.id);
+    if (!numPT(a.preco)) toast('Artigo sem preço no ficheiro: escreve o preço.', 4000);
+    return;
+  }
+  abrirPesquisa(t);
+}
+$('#cod').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); processar(e.target.value); }
+});
+
+/* ---- edição das linhas ---- */
+$('#lin').addEventListener('change', e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const l = venda.lin.find(x => x.id === tr.dataset.id); if (!l) return;
+  const f = e.target.dataset.f;
+  if (f === 'volta') { l.volta = e.target.checked; alterou(); return; }
+  const v = numPT(e.target.value);
+  if (f === 'qtd') { l.qtd = r3(v); l.total = r2(l.qtd * l.pu); }
+  else if (f === 'pu') { l.pu = r2(v); if (l.bal === 'preco' && l.pu > 0) l.qtd = r3(l.total / l.pu); else l.total = r2(l.qtd * l.pu); }
+  else if (f === 'total') { l.total = r2(v); if (l.bal && l.pu > 0) l.qtd = r3(l.total / l.pu); else if (l.qtd > 0) l.pu = r2(l.total / l.qtd); }
+  alterou();
+});
+$('#lin').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('input[type=text]')) { e.preventDefault(); e.target.blur(); focoCod(); }
+});
+$('#lin').addEventListener('click', e => {
+  if (!e.target.dataset.del) return;
+  const tr = e.target.closest('tr'); venda.lin = venda.lin.filter(x => x.id !== tr.dataset.id); alterou(); focoCod();
+});
+
+/* ---- pagamento e restantes campos ---- */
+$('#pag').addEventListener('change', e => { venda.pag = e.target.value; alterou(); });
+$('#rec').addEventListener('input', e => { venda.rec = e.target.value.trim(); render(); guardarRascunho(); });
+$('#notas').addEventListener('click', e => {
+  const v = e.target.dataset.v; if (!v) return;
+  venda.rec = v === 'exato' ? String(totais().total).replace('.', ',') : v; $('#rec').value = venda.rec; alterou();
+});
+$('#cartao').addEventListener('input', e => { venda.cartao = e.target.value.trim(); guardarRascunho(); });
+$('#doc').addEventListener('change', e => { venda.doc = e.target.value; guardarRascunho(); });
+$('#obs').addEventListener('input', e => { venda.obs = e.target.value; guardarRascunho(); });
+$('#extra').addEventListener('change', e => { venda.extra = parseFloat(e.target.value.replace(',', '.')) || 0; e.target.value = venda.extra; alterou(); });
+$('#taxaval').addEventListener('change', async e => { const v = numPT(e.target.value); taxaVal = v > 0 ? v : 0.10; e.target.value = taxaVal.toFixed(2).replace('.', ','); await kvSet('pos_taxaVal', taxaVal); alterou(); });
+
+/* ---- pesquisa ---- */
+let pqRes = [], pqSel = 0;
+function abrirPesquisa(txt) {
+  $('#pq').classList.add('on'); $('#pq-in').value = txt || ''; pesquisar(); $('#pq-in').focus(); $('#pq-in').select();
+}
+function fecharPesquisa() { $('#pq').classList.remove('on'); focoCod(); }
+function pesquisar() {
+  const t = $('#pq-in').value;
+  pqRes = t.trim().length >= 2 ? pesquisarNome(t, $('#pq-modo').value, 100) : []; pqSel = 0;
+  $('#pq-res').innerHTML = pqRes.length ? pqRes.map((r, i) => '<div class="it' + (i === 0 ? ' sel' : '') + '" data-i="' + i + '"><div><b>' + esc(r.desc) + '</b><br><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><b>' + esc(fmtPreco(r.preco)) + '</b></div>').join('')
+    : '<div class="muted" style="padding:10px">' + (t.trim().length >= 2 ? 'Sem resultados. Podes usar "Artigo livre".' : 'Escreve pelo menos 2 letras.') + '</div>';
+}
+function escolherPesq(i) {
+  const a = pqRes[i]; if (!a) return;
+  $('#pq').classList.remove('on');
+  const l = addArtigo(a, 1); ultimaLinha = l.id; $('#cod').value = ''; alterou(); focoQtd(l.id);
+}
+$('#pq-in').addEventListener('input', pesquisar);
+$('#pq-modo').addEventListener('change', pesquisar);
+$('#pq-res').addEventListener('click', e => { const it = e.target.closest('.it'); if (it) escolherPesq(+it.dataset.i); });
+$('#pq-x').addEventListener('click', fecharPesquisa);
+$('#pq-in').addEventListener('keydown', e => {
+  if (e.key === 'Escape') fecharPesquisa();
+  else if (e.key === 'Enter') { e.preventDefault(); escolherPesq(pqSel); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); if (!pqRes.length) return;
+    pqSel = Math.max(0, Math.min(pqRes.length - 1, pqSel + (e.key === 'ArrowDown' ? 1 : -1)));
+    document.querySelectorAll('#pq-res .it').forEach((x, i) => x.classList.toggle('sel', i === pqSel));
+    const s = document.querySelector('#pq-res .it.sel'); if (s) s.scrollIntoView({ block: 'nearest' });
+  }
+});
+$('#b-pesq').addEventListener('click', () => abrirPesquisa($('#cod').value));
+$('#b-livre').addEventListener('click', async () => {
+  const desc = await dlg('Descrição do artigo livre:', ''); if (desc === null || !desc.trim()) return focoCod();
+  const preco = await dlg('Preço (€, com IVA):', ''); if (preco === null) return focoCod();
+  const pu = numPT(preco); if (!(pu > 0)) { toast('Preço inválido.'); return focoCod(); }
+  const l = { id: novoId(), cod: 'LIVRE', desc: desc.trim(), qtd: 1, pu: r2(pu), total: r2(pu), volta: false, bal: null };
+  venda.lin.push(l); ultimaLinha = l.id; alterou(); focoQtd(l.id);
+});
+
+/* ---- finalizar / cancelar ---- */
+async function nova() {
+  venda = novaVenda(); ultimaLinha = null;
+  $('#cod').value = ''; $('#rec').value = ''; $('#cartao').value = ''; $('#obs').value = ''; $('#extra').value = '0';
+  $('#pag').value = 'Dinheiro'; $('#doc').value = 'Fatura simplificada';
+  render(); await kvDel('pos_rascunho'); focoCod();
+}
+let finalizando = false;
+async function finalizar() {
+  if (finalizando) return;
+  if (!venda.lin.length) { toast('Não há artigos na venda.'); return; }
+  const T = totais(), din = venda.pag === 'Dinheiro';
+  const rec = din ? (venda.rec === '' ? T.total : numPT(venda.rec)) : T.total;
+  if (din && rec < T.total - 0.001 && !await dlg('O valor recebido (' + eur(rec) + ') é inferior ao total (' + eur(T.total) + ').\nFinalizar mesmo assim?')) return;
+  finalizando = true;
+  if (pastaH && pastaEstado === 'reativar') { try { if ((await pastaH.requestPermission({ mode: 'readwrite' })) === 'granted') pastaEstado = 'ok'; } catch (e) { } }
+  try {
+    const chaves = await kvKeysPV();
+    const n = chaves.reduce((m, k) => Math.max(m, parseInt(String(k).slice(3), 10) || 0), 0) + 1;
+    const s = { n, t: Date.now(), lin: JSON.parse(JSON.stringify(venda.lin)), pag: venda.pag, rec: r2(rec), troco: din ? r2(Math.max(0, rec - T.total)) : 0,
+      cartao: venda.cartao, doc: venda.doc, obs: venda.obs, sub: T.sub, taxaUn: T.un, taxaVal, taxa: T.taxa, total: T.total, estado: 'ok' };
+    await kvSet('pv_' + pad(n), s);          // gravada de imediato: não se perde se faltar a luz
+    await kvDel('pos_rascunho');
+    mostrarRecibo(s, true);
+    venda = novaVenda(); ultimaLinha = null;
+    copiaDia(s.t);   // cópia para a pasta (sem esperar)
+  } catch (e) { toast('ERRO ao guardar a venda: ' + e.message, 8000); }
+  finalizando = false;
+}
+$('#b-fim').addEventListener('click', finalizar);
+$('#b-canc').addEventListener('click', async () => {
+  if (venda.lin.length && !await dlg('Cancelar esta venda e apagar as ' + venda.lin.length + ' linha(s)?')) return;
+  await nova();
+});
+
+/* ---- talão no ecrã ---- */
+let reciboAtual = null;
+function mostrarRecibo(s, novaDepois) {
+  reciboAtual = s;
+  const linhas = s.lin.map(l => '<tr><td>' + esc(l.desc) + '<br><span class="muted">' + fmtQ(l.qtd) + ' × ' + eur(l.pu) + '</span></td><td class="num">' + eur(l.total) + '</td></tr>').join('') +
+    (s.taxaUn > 0 ? '<tr><td>♻️ Taxa Volta<br><span class="muted">' + fmtQ(s.taxaUn) + ' × ' + eur(s.taxaVal) + '</span></td><td class="num">' + eur(s.taxa) + '</td></tr>' : '');
+  $('#rec-corpo').innerHTML = '<h3>Bom Dia São Jorge</h3><div class="muted">' + esc(s.doc) + ' · venda n.º ' + s.n + ' · ' + dataPT(s.t) + ' ' + horaStr(s.t) + (s.estado === 'anulada' ? ' · <b style="color:var(--er)">ANULADA</b>' : '') + '</div>' +
+    '<table style="margin:8px 0">' + linhas + '</table>' +
+    '<div class="linha"><b>TOTAL</b><b style="font-size:24px">' + eur(s.total) + '</b></div>' +
+    '<div class="linha"><span>' + esc(s.pag) + '</span><span>' + (s.pag === 'Dinheiro' ? 'Recebido ' + eur(s.rec) : '') + '</span></div>' +
+    (s.pag === 'Dinheiro' ? '<div class="linha"><b>Troco</b><b style="font-size:26px;color:var(--ok)">' + eur(s.troco) + '</b></div>' : '') +
+    (s.cartao ? '<div class="muted">Cartão de cliente: ' + esc(s.cartao) + '</div>' : '') + (s.obs ? '<div class="muted">Obs.: ' + esc(s.obs) + '</div>' : '');
+  $('#rec-anular').hidden = !!novaDepois;
+  $('#rec-anular').textContent = s.estado === 'anulada' ? 'Reativar venda' : 'Anular venda';
+  $('#rec-ok').textContent = novaDepois ? 'Nova venda (Enter)' : 'Fechar';
+  $('#recibo').dataset.nova = novaDepois ? '1' : '';
+  $('#recibo').classList.add('on'); document.body.classList.add('rec-aberto'); $('#rec-ok').focus();
+}
+async function fecharRecibo() {
+  const nv = $('#recibo').dataset.nova; $('#recibo').classList.remove('on'); document.body.classList.remove('rec-aberto');
+  if (nv) await nova(); else { await listarVendas(); focoCod(); }
+}
+$('#rec-ok').addEventListener('click', fecharRecibo);
+$('#rec-print').addEventListener('click', () => window.print());
+$('#rec-anular').addEventListener('click', async () => {
+  const s = reciboAtual; if (!s) return;
+  s.estado = s.estado === 'anulada' ? 'ok' : 'anulada'; await kvSet('pv_' + pad(s.n), s); copiaDia(s.t);
+  mostrarRecibo(s, false); await listarVendas();
+});
+
+/* ---- vendas guardadas ---- */
+async function listarVendas() {
+  const dia = $('#vd-dia').value || dataStr(Date.now());
+  const todas = (await kvPV()).sort((a, b) => a.n - b.n), v = todas.filter(s => dataStr(s.t) === dia);
+  $('#vd-list').innerHTML = v.map(s => '<tr class="' + (s.estado === 'anulada' ? 'cancelada' : '') + '" data-n="' + s.n + '" style="cursor:pointer"><td>' + s.n + '</td><td>' + horaStr(s.t) + '</td><td>' + esc(s.doc) + '</td><td>' + esc(s.pag) + '</td><td class="num">' + eur(s.total) + '</td><td>' + esc(s.obs) + '</td></tr>').join('');
+  $('#vd-vazio').hidden = v.length > 0;
+  const ok = v.filter(s => s.estado !== 'anulada'), soma = f => r2(ok.filter(f).reduce((a, s) => a + s.total, 0));
+  $('#vd-resumo').innerHTML = '<b>Resumo do dia (sem anuladas)</b><div class="linha"><span>' + ok.length + ' venda(s)</span><b>' + eur(soma(() => true)) + '</b></div>' +
+    ['Dinheiro', 'Cartão multibanco', 'Cheque'].map(p => '<div class="linha"><span>' + p + '</span><span>' + eur(soma(s => s.pag === p)) + '</span></div>').join('') +
+    '<div class="linha"><span>♻️ Taxa Volta (incluída)</span><span>' + eur(r2(ok.reduce((a, s) => a + s.taxa, 0))) + '</span></div>';
+  $('#vd-info').textContent = todas.length + ' venda(s) guardadas no total neste computador.';
+  listarVendas._todas = todas;
+}
+$('#vd-dia').addEventListener('change', listarVendas);
+$('#vd-list').addEventListener('click', e => { const tr = e.target.closest('tr'); if (!tr) return; const s = (listarVendas._todas || []).find(x => x.n === +tr.dataset.n); if (s) mostrarRecibo(s, false); });
+
+/* ---- Excel (.xlsx) escrito aqui mesmo, sem bibliotecas ---- */
+const CRC = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = u => { let c = 0xFFFFFFFF; for (let i = 0; i < u.length; i++) c = CRC[(c ^ u[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function zipStore(files) {
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  const le = (n, b) => { const a = new Uint8Array(b); for (let i = 0; i < b; i++) a[i] = (n >>> (8 * i)) & 255; return a; };
+  for (const [nome, txt] of files) {
+    const nb = enc.encode(nome), d = enc.encode(txt), c = crc32(d);
+    const h = [le(0x04034b50, 4), le(20, 2), le(0, 2), le(0, 2), le(0, 2), le(0x21, 2), le(c, 4), le(d.length, 4), le(d.length, 4), le(nb.length, 2), le(0, 2), nb, d];
+    h.forEach(x => parts.push(x));
+    cen.push([le(0x02014b50, 4), le(20, 2), le(20, 2), le(0, 2), le(0, 2), le(0, 2), le(0x21, 2), le(c, 4), le(d.length, 4), le(d.length, 4), le(nb.length, 2), le(0, 2), le(0, 2), le(0, 2), le(0, 2), le(0, 4), le(off, 4), nb]);
+    off += 30 + nb.length + d.length;
+  }
+  let csz = 0; cen.forEach(r => r.forEach(x => { parts.push(x); csz += x.length; }));
+  [le(0x06054b50, 4), le(0, 2), le(0, 2), le(files.length, 2), le(files.length, 2), le(csz, 4), le(off, 4), le(0, 2)].forEach(x => parts.push(x));
+  return new Blob(parts, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+const xe = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+const colL = i => String.fromCharCode(65 + i);
+// estilos: 1 cabeçalho, 2 data, 3 hora, 4 dinheiro, 5 quantidade
+function folha(cab, linhas, larg) {
+  const cel = (v, i, r) => {
+    const ref = colL(i) + r;
+    if (v == null || v === '') return '';
+    if (typeof v === 'object') return '<c r="' + ref + '" s="' + v.s + '"><v>' + v.v + '</v></c>';
+    if (typeof v === 'number') return '<c r="' + ref + '"><v>' + v + '</v></c>';
+    return '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + xe(v) + '</t></is></c>';
+  };
+  let x = '<row r="1">' + cab.map((c, i) => '<c r="' + colL(i) + '1" s="1" t="inlineStr"><is><t>' + xe(c) + '</t></is></c>').join('') + '</row>';
+  linhas.forEach((l, k) => { x += '<row r="' + (k + 2) + '">' + l.map((v, i) => cel(v, i, k + 2)).join('') + '</row>'; });
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>' +
+    larg.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols><sheetData>' + x + '</sheetData><autoFilter ref="A1:' + colL(cab.length - 1) + (linhas.length + 1) + '"/></worksheet>';
+}
+const serial = t => (t - new Date(t).getTimezoneOffset() * 60000) / 86400000 + 25569;
+function construirXlsx(vendas) {
+  const L = [], R = [];
+  vendas.forEach(s => {
+    const d = { s: 2, v: Math.floor(serial(s.t)) }, h = { s: 3, v: +(serial(s.t) % 1).toFixed(6) }, est = s.estado === 'anulada' ? 'ANULADA' : '';
+    const fim = [s.pag, { s: 4, v: s.rec }, { s: 4, v: s.troco }, s.cartao, s.doc, s.obs, est];
+    s.lin.forEach(l => L.push([s.n, d, h, l.cod, l.desc, { s: 5, v: l.qtd }, { s: 4, v: l.pu }, { s: 4, v: l.total }].concat(fim)));
+    if (s.taxaUn > 0) L.push([s.n, d, h, codTaxa, 'Taxa Volta', { s: 5, v: s.taxaUn }, { s: 4, v: s.taxaVal }, { s: 4, v: s.taxa }].concat(fim));
+    R.push([s.n, d, h, { s: 4, v: s.sub }, { s: 4, v: s.taxa }, { s: 4, v: s.total }].concat(fim));
+  });
+  const cab1 = ['Venda', 'Data', 'Hora', 'Código', 'Descrição', 'Quantidade', 'Preço unit. (IVA incl.)', 'Total linha', 'Pagamento', 'Recebido', 'Troco', 'Cartão cliente', 'Tipo documento', 'Observações', 'Estado'];
+  const cab2 = ['Venda', 'Data', 'Hora', 'Subtotal', 'Taxa Volta', 'Total', 'Pagamento', 'Recebido', 'Troco', 'Cartão cliente', 'Tipo documento', 'Observações', 'Estado'];
+  const ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  return zipStore([
+    ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'],
+    ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="' + ns + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Vendas" sheetId="1" r:id="rId1"/><sheet name="Resumo" sheetId="2" r:id="rId2"/></sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+    ['xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="' + ns + '"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/><numFmt numFmtId="165" formatCode="hh:mm"/><numFmt numFmtId="166" formatCode="0.000"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEC400"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'],
+    ['xl/worksheets/sheet1.xml', folha(cab1, L, [8, 12, 8, 16, 38, 11, 14, 12, 18, 11, 10, 16, 20, 28, 10])],
+    ['xl/worksheets/sheet2.xml', folha(cab2, R, [8, 12, 8, 12, 12, 12, 18, 11, 10, 16, 20, 28, 10])]
+  ]);
+}
+function baixar(blob, nome) {
+  const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 5000);
+}
+async function exportar(soDia) {
+  const todas = (await kvPV()).sort((a, b) => a.n - b.n), dia = $('#vd-dia').value || dataStr(Date.now());
+  const v = soDia ? todas.filter(s => dataStr(s.t) === dia) : todas;
+  if (!v.length) { toast('Não há vendas para exportar.'); return; }
+  baixar(construirXlsx(v), 'vendas_pos_' + (soDia ? dia.replace(/-/g, '') : 'todas_' + dataStr(Date.now()).replace(/-/g, '')) + '.xlsx');
+  toast('✔ ' + v.length + ' venda(s) exportada(s).');
+}
+$('#vd-exp-dia').addEventListener('click', () => exportar(true));
+$('#vd-exp-tudo').addEventListener('click', () => exportar(false));
+
+/* ---- cópia automática para uma pasta (Chrome/Edge no computador) ---- */
+const temFS = 'showDirectoryPicker' in window;
+let pastaH = null, pastaEstado = temFS ? 'nenhuma' : 'indisponivel', pastaUltima = 0, pastaErro = '';
+function pastaUI() {
+  const b = $('#b-pasta'); if (!b) return;
+  const nome = pastaH && pastaH.name ? pastaH.name : '';
+  const t = {
+    indisponivel: ['💾 Cópia automática indisponível neste navegador (usa Chrome ou Edge)', '#d9b100'],
+    nenhuma: ['💾 Escolher pasta para a cópia automática', '#FEC400'],
+    ok: ['💾 Cópia automática: ' + nome + (pastaUltima ? ' · última às ' + horaStr(pastaUltima) : ''), '#7fe39a'],
+    reativar: ['⚠️ Cópia parada: clica para reativar', '#FEC400'],
+    erro: ['⚠️ Cópia falhou (' + pastaErro + '): clica para tentar de novo', '#ff8a80']
+  }[pastaEstado];
+  b.textContent = t[0]; b.style.color = t[1]; b.disabled = pastaEstado === 'indisponivel';
+}
+async function pastaInit() {
+  if (!temFS) return pastaUI();
+  try {
+    pastaH = (await kvGet('pos_pasta')) || null;
+    if (pastaH) pastaEstado = (await pastaH.queryPermission({ mode: 'readwrite' })) === 'granted' ? 'ok' : 'reativar';
+  } catch (e) { pastaH = null; pastaEstado = 'nenhuma'; }
+  pastaUI();
+}
+async function pastaEscolher() {
+  try {
+    const h = await window.showDirectoryPicker({ id: 'pos-vendas', mode: 'readwrite' });
+    pastaH = h; pastaEstado = 'ok'; pastaErro = ''; await kvSet('pos_pasta', h).catch(() => { });
+    pastaUI(); await copiaDia(Date.now());
+    if (pastaEstado === 'ok') toast('✔ Cópia automática ativa na pasta "' + h.name + '".', 4000);
+  } catch (e) { if (e.name !== 'AbortError') toast('Não consegui abrir a pasta: ' + e.message, 5000); }
+}
+async function pastaClique() {
+  if (!pastaH || pastaEstado === 'nenhuma') return pastaEscolher();
+  if (pastaEstado === 'ok') { if (await dlg('Escolher outra pasta para a cópia automática?')) return pastaEscolher(); return; }
+  try {
+    const p = await pastaH.requestPermission({ mode: 'readwrite' });
+    pastaEstado = p === 'granted' ? 'ok' : 'reativar'; pastaUI();
+    if (pastaEstado === 'ok') await copiaDia(Date.now()); else toast('Sem permissão para escrever na pasta.', 4000);
+  } catch (e) { pastaEstado = 'erro'; pastaErro = e.name; pastaUI(); }
+}
+// reescreve o Excel do dia na pasta, com todas as vendas desse dia
+async function copiaDia(t) {
+  if (!pastaH) return false;
+  try {
+    if ((await pastaH.queryPermission({ mode: 'readwrite' })) !== 'granted') { pastaEstado = 'reativar'; pastaUI(); return false; }
+    const dia = dataStr(t), v = (await kvPV()).filter(s => dataStr(s.t) === dia).sort((a, b) => a.n - b.n);
+    if (!v.length) return true;
+    const fh = await pastaH.getFileHandle('vendas_' + dia.replace(/-/g, '') + '.xlsx', { create: true });
+    const w = await fh.createWritable(); await w.write(construirXlsx(v)); await w.close();
+    pastaEstado = 'ok'; pastaErro = ''; pastaUltima = Date.now(); pastaUI(); return true;
+  } catch (e) {
+    pastaEstado = 'erro'; pastaErro = e.name === 'NoModificationAllowedError' || e.name === 'InvalidStateError' ? 'ficheiro aberto noutro programa?' : e.name; pastaUI();
+    toast('A venda está guardada, mas a cópia para a pasta falhou: ' + pastaErro, 6000); return false;
+  }
+}
+$('#b-pasta').addEventListener('click', pastaClique);
+
+/* ---- separadores e atalhos ---- */
+function irPara(t) {
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === t));
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (t === 'vendas') listarVendas(); else focoCod();
+}
+document.querySelector('nav').addEventListener('click', e => { const b = e.target.closest('button'); if (b) irPara(b.dataset.t); });
+document.addEventListener('keydown', e => {
+  const modal = document.querySelector('.modal.on');
+  if (e.key === 'Escape' && $('#pq').classList.contains('on')) { fecharPesquisa(); return; }
+  if (modal && modal.id === 'recibo' && e.key === 'Enter' && document.activeElement.tagName !== 'BUTTON') { fecharRecibo(); return; }
+  if (modal) return;
+  if (e.key === 'F2') { e.preventDefault(); abrirPesquisa($('#cod').value); }
+  else if (e.key === 'F9') { e.preventDefault(); finalizar(); }
+});
+window.addEventListener('beforeunload', e => { if (venda.lin.length) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ---- arranque ---- */
+(async function init() {
+  $('#vd-dia').value = dataStr(Date.now());
+  try {
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    artigos = (await kvGet('artigos')) || []; indexar(); infoArtigos();
+    voltaSet = new Set((await kvGet('volta')) || []);
+    codTaxa = (await kvGet('codTaxa')) || 'VALOR DEPOSITO';
+    taxaVal = (await kvGet('pos_taxaVal')) || 0.10;
+    const r = await kvGet('pos_rascunho');
+    if (r && r.lin && r.lin.length) { venda = Object.assign(novaVenda(), r); toast('Venda em curso recuperada (' + r.lin.length + ' linha(s)).', 4500); }
+  } catch (e) { toast('Aviso: armazenamento local indisponível (' + e.message + ')', 6000); }
+  $('#taxaval').value = taxaVal.toFixed(2).replace('.', ',');
+  $('#pag').value = venda.pag; $('#doc').value = venda.doc; $('#rec').value = venda.rec; $('#cartao').value = venda.cartao; $('#obs').value = venda.obs; $('#extra').value = venda.extra || 0;
+  render(); focoCod(); pastaInit();
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
+  if (!artigos.length) { $('#loading').style.display = 'flex'; await atualizarLista(); $('#loading').style.display = 'none'; infoArtigos(); }
+  else atualizarLista();
+})();
+
+</script>
+</body>
+</html>

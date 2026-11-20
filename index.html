@@ -173,6 +173,7 @@
       <button class="sec" id="cfg-save">Guardar</button>
     </details>
   </div>
+  <p style="text-align:center;margin-top:18px"><a href="pos.html" target="_blank" style="color:#0b3d91;font-weight:bold">🖥️ Abrir o POS de emergência (para computador)</a></p>
   <div class="muted" id="ver" style="margin:18px 0 8px;text-align:center"></div>
 </section>
 
@@ -358,8 +359,25 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v12';
-document.addEventListener('DOMContentLoaded', () => { const v = document.getElementById('ver'); if (v) v.textContent = 'Versão da app: ' + VERSAO; });
+const VERSAO = 'v15', VERSAO_DATA = '20/11/2026 20:10';
+// Novidades de cada versão em relação à anterior (a mais recente primeiro). Acrescenta aqui a cada versão nova.
+const NOVIDADES = [
+  { v: 'v15', data: '20/11/2026 20:10', itens: [
+    'Em Artigos: aparece a data e hora desta versão e as novidades em relação à versão anterior.',
+    'Em Artigos: aparece a data e hora em que a lista de artigos foi atualizada neste telemóvel e a da última verificação.' ] },
+  { v: 'v14', data: '19/11/2026', itens: ['POS de emergência: cópia automática em Excel para uma pasta do computador a cada venda.'] },
+  { v: 'v13', data: '19/11/2026', itens: ['Novo POS de emergência para computador (pos.html) e ligação para ele em Artigos.'] },
+  { v: 'v12', data: '19/11/2026', itens: ['Etiquetas de balança: 29 (peso) e 27 (preço).', 'Taxa Volta: marcação por artigo e linha final VALOR DEPOSITO no .plt.'] }
+];
+function mostrarVersao() {
+  const v = document.getElementById('ver'); if (!v) return;
+  const li = n => '<ul style="margin:4px 0 8px 18px;padding:0">' + n.itens.map(i => '<li>' + esc(i) + '</li>').join('') + '</ul>';
+  const [atual, ...antigas] = NOVIDADES;
+  v.innerHTML = '<div style="text-align:center"><b>Versão da app: ' + esc(VERSAO) + '</b><br>' + esc(VERSAO_DATA) + '</div>' +
+    '<div style="text-align:left;margin-top:10px"><b>Novidades em relação à ' + esc(antigas.length ? antigas[0].v : 'versão anterior') + ':</b>' + li(atual) +
+    (antigas.length ? '<details><summary>Versões anteriores</summary>' + antigas.map(n => '<div style="margin-top:6px"><b>' + esc(n.v) + '</b> · ' + esc(n.data) + li(n) + '</div>').join('') + '</details>' : '') + '</div>';
+}
+document.addEventListener('DOMContentLoaded', mostrarVersao);
 const GS = '\x1d';
 const AI_FIXOS = { '00': 18, '01': 14, '02': 14, '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6, '20': 2 };
 const AI_VAR = { '10': 20, '21': 20, '30': 8, '37': 8, '240': 30, '241': 30, '250': 30, '251': 30 };
@@ -806,8 +824,16 @@ $('#cfg-save').addEventListener('click', async () => {
 });
 
 /* ---------- ARTIGOS (carregar CSV) ---------- */
-function infoArtigos(data) {
-  $('#ar-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos carregados' + (data ? ' em ' + new Date(data).toLocaleString('pt-PT') : '') + '.' : 'Nenhuma lista carregada.';
+async function infoArtigos(data) {
+  const el = $('#ar-info');
+  if (!artigos.length) { el.textContent = 'Nenhuma lista carregada.'; return; }
+  const f = t => new Date(t).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' });
+  let mudou = null, pub = null;
+  try { mudou = await kvGet('listaMudou'); pub = await kvGet('listaPub'); } catch (e) { }
+  el.innerHTML = '<b>' + artigos.length.toLocaleString('pt-PT') + ' artigos</b> carregados.' +
+    '<br>Lista atualizada neste telemóvel em: <b>' + (mudou ? f(mudou) : (data ? f(data) : 'desconhecido')) + '</b>' +
+    (pub ? '<br>Ficheiro publicado no GitHub em: ' + f(pub) : '') +
+    (data ? '<br>Última verificação: ' + f(data) : '');
 }
 $('#ar-file').addEventListener('change', async e => {
   const f = e.target.files[0]; if (!f) return;
@@ -819,7 +845,7 @@ $('#ar-file').addEventListener('change', async e => {
     if (!novos.length) { toast('Não encontrei artigos neste ficheiro.', 4000); }
     else {
       artigos = novos; indexar();
-      await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvDel('listaHash');
+      await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvDel('listaHash'); await kvSet('listaMudou', Date.now()); await kvDel('listaPub');
       infoArtigos(Date.now()); toast('✔ ' + artigos.length + ' artigos carregados.');
     }
   } catch (err) { toast('Erro a ler o ficheiro: ' + err.message, 5000); }
@@ -827,7 +853,7 @@ $('#ar-file').addEventListener('change', async e => {
 });
 $('#ar-del').addEventListener('click', async () => {
   if (!await dlg('Apagar a lista de artigos deste telemóvel? As leituras do inventário não são apagadas.')) return;
-  artigos = []; indexar(); await kvDel('artigos'); await kvDel('artigosData'); infoArtigos();
+  artigos = []; indexar(); await kvDel('artigos'); await kvDel('artigosData'); await kvDel('listaMudou'); await kvDel('listaPub'); infoArtigos();
 });
 
 /* ---------- atualização automática da lista ---------- */
@@ -847,7 +873,8 @@ async function atualizarLista(manual) {
     const novos = construirArtigos(parseCSV(txt));
     if (!novos.length) throw new Error('lista vazia');
     artigos = novos; indexar();
-    await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvSet('listaHash', h);
+    await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvSet('listaHash', h); await kvSet('listaMudou', Date.now());
+    { const lm = Date.parse(r.headers.get('last-modified') || ''); await kvSet('listaPub', isNaN(lm) ? null : lm); }
     infoArtigos(Date.now());
     toast('✔ Lista atualizada: ' + artigos.length.toLocaleString('pt-PT') + ' artigos');
     return true;
