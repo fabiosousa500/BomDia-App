@@ -1,4 +1,4 @@
-const C = 'precos-inv-v16';
+const C = 'precos-inv-v17';
 const FICHEIROS = ['./', 'index.html', 'pos.html', 'config.js', 'manifest.json', 'logo.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

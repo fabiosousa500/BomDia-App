@@ -93,7 +93,7 @@
     <div class="linha"><span>Subtotal</span><b id="t-sub">0,00 €</b></div>
     <div class="linha"><span>♻️ Taxa Volta <small id="t-un" class="muted"></small></span><b id="t-taxa">0,00 €</b></div>
     <div class="row" style="align-items:end">
-      <div><label>Taxa Volta por unidade (€)</label><input type="text" id="taxaval" inputmode="decimal" style="width:100%"></div>
+      <div hidden><label>Taxa Volta por unidade (€)</label><input type="text" id="taxaval" inputmode="decimal" style="width:100%"></div>
       <div><label>Unidades extra de taxa</label><input type="text" id="extra" inputmode="numeric" value="0" style="width:100%"></div>
     </div>
     <div class="tot" id="t-total">0,00 €</div>
@@ -233,6 +233,7 @@ function construirArtigos(rows) {
   const cDes = find(x => x.includes('descri'), 2);
   const cPre = find(x => x.startsWith('preco'), 3);
   const cBal = find(x => x.includes('balanca'), -1);   // coluna opcional: regra de balança da família do artigo (ex.: 29:peso:2:3 ou 27:preco_total:3:2)
+  const cTx = find(x => x.includes('taxas'), -1);   // coluna opcional: taxas associadas no ERP (ex.: VALOR DEPOSITO:1.000|01:1.000)
   const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
   for (let i = 1; i < rows.length; i++) {
@@ -244,7 +245,9 @@ function construirArtigos(rows) {
     const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
     let rg = null;
     if (cBal >= 0) { const p = String(r[cBal] || '').trim().split(':'); if (p.length === 4 && p[0] && (p[1] === 'peso' || p[1] === 'preco_total') && /^\d+$/.test(p[0]) && +p[2] >= 0 && +p[3] >= 0) rg = { pre: p[0], tipo: p[1] === 'peso' ? 'peso' : 'preco', ni: +p[2], nd: +p[3] }; }
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    let tx = null;
+    if (cTx >= 0 && r[cTx]) { tx = String(r[cTx]).split('|').map(x => { const i = x.lastIndexOf(':'); return i > 0 ? { cod: x.slice(0, i).trim(), f: parseFloat(x.slice(i + 1)) || 0 } : null; }).filter(x => x && x.cod && x.f > 0); if (!tx.length) tx = null; }
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, tx, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
@@ -269,6 +272,8 @@ function lookup(c) {
   if (i == null) { const s = strip0(c); if (s) { i = idxBar0.get(s); if (i == null) i = idxCod0.get(s); } }
   return i == null ? null : artigos[i];
 }
+// fator de uma taxa associada ao artigo no ERP (0 se não tiver)
+function fatorTx(a, cod) { const t = a && a.tx ? a.tx.find(x => x.cod === cod) : null; return t ? t.f : 0; }
 function numPT(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return 0; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) || n < 0 ? 0 : n; }
 const eur = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 function depTexto(a, q) { return a && a.dep > 0 ? '♻️ Depósito Volta: ' + eur(a.dep) + ' por unidade' + (q > 0 ? ' · ' + fmtQ(q) + ' un. = ' + eur(a.dep * q) : '') : ''; }
@@ -424,7 +429,7 @@ const guardarRascunho = () => kvSet('pos_rascunho', venda).catch(() => { });
 
 function totais() {
   const sub = r2(venda.lin.reduce((s, l) => s + l.total, 0));
-  const un = r3(venda.lin.reduce((s, l) => s + (l.volta ? l.qtd : 0), 0) + (parseFloat(venda.extra) || 0));
+  const un = r3(venda.lin.reduce((s, l) => s + (l.volta ? l.qtd * (l.vf || 1) : 0), 0) + (parseFloat(venda.extra) || 0));
   const taxa = r2(un * taxaVal);
   return { sub, un, taxa, total: r2(sub + taxa) };
 }
@@ -434,16 +439,32 @@ function addArtigo(a, qtd) {
   const cod = a.bar || a.cod, pu = numPT(a.preco);
   const ex = venda.lin.find(l => l.cod === cod && !l.bal);
   if (ex) { ex.qtd = r3(ex.qtd + qtd); ex.total = r2(ex.qtd * ex.pu); return ex; }
-  const l = { id: novoId(), cod, desc: a.desc, qtd, pu, total: r2(qtd * pu), volta: isVolta(cod), bal: null };
-  venda.lin.push(l); return l;
+  const vf = fatorTx(a, codTaxa);
+  const l = { id: novoId(), cod, desc: a.desc, qtd, pu, total: r2(qtd * pu), volta: vf > 0 || isVolta(cod), vf: vf > 0 ? vf : 1, bal: null };
+  venda.lin.push(l); taxasExtra(l, a); return l;
 }
 function addBalanca(b, a) {
   const pk = numPT(a.preco), cod = a.bar || a.cod || b.art;
-  const l = { id: novoId(), cod, desc: a.desc, qtd: 1, pu: pk, total: 0, volta: isVolta(cod), bal: b.tipo };
+  const vf = fatorTx(a, codTaxa);
+  const l = { id: novoId(), cod, desc: a.desc, qtd: 1, pu: pk, total: 0, volta: vf > 0 || isVolta(cod), vf: vf > 0 ? vf : 1, bal: b.tipo };
   if (b.tipo === 'peso') { l.qtd = r3(b.valor); l.total = r2(l.qtd * pk); }
   else if (pk > 0) { l.total = r2(b.valor); l.qtd = r3(b.valor / pk); }
   else { l.qtd = 1; l.pu = b.valor; l.total = r2(b.valor); }
-  venda.lin.push(l); return l;
+  venda.lin.push(l); taxasExtra(l, a); return l;
+}
+// outras taxas associadas no ERP (ex.: 01 no saco): entram como linha própria, com a quantidade do artigo × fator
+function taxasExtra(pai, a) {
+  (a && a.tx || []).filter(x => x.cod !== codTaxa).forEach(x => {
+    const t = lookup(x.cod), pu = (t && numPT(t.preco)) || (x.cod === '01' ? 0.10 : 0), q = r3(pai.qtd * x.f);
+    venda.lin.push({ id: novoId(), cod: x.cod, desc: t ? t.desc : 'Taxa ' + x.cod, qtd: q, pu, total: r2(q * pu), volta: false, vf: 1, bal: null, pai: pai.id, f: x.f, pq: pai.qtd });
+  });
+}
+function sincTaxas() {
+  venda.lin = venda.lin.filter(c => !c.pai || venda.lin.some(p => p.id === c.pai));
+  venda.lin.filter(c => c.pai).forEach(c => {
+    const p = venda.lin.find(x => x.id === c.pai);
+    if (p.qtd !== c.pq) { c.qtd = r3(p.qtd * c.f); c.total = r2(c.qtd * c.pu); c.pq = p.qtd; }
+  });
 }
 
 /* ---- apresentação ---- */
@@ -469,7 +490,7 @@ function render() {
 }
 function focoCod() { const c = $('#cod'); c.focus(); c.select(); }
 function focoQtd(id) { const i = document.querySelector('tr[data-id="' + id + '"] input[data-f=qtd]'); if (i) { i.focus(); i.select(); } else focoCod(); }
-function alterou() { render(); guardarRascunho(); }
+function alterou() { sincTaxas(); render(); guardarRascunho(); }
 
 /* ---- entrada de código ---- */
 function processar(txt) {
@@ -800,7 +821,7 @@ window.addEventListener('beforeunload', e => { if (venda.lin.length) { e.prevent
     artigos = (await kvGet('artigos')) || []; indexar(); infoArtigos();
     voltaSet = new Set((await kvGet('volta')) || []);
     codTaxa = (await kvGet('codTaxa')) || 'VALOR DEPOSITO';
-    taxaVal = (await kvGet('pos_taxaVal')) || 0.10;
+    taxaVal = 0.10;   // taxa Volta fixa
     const r = await kvGet('pos_rascunho');
     if (r && r.lin && r.lin.length) { venda = Object.assign(novaVenda(), r); toast('Venda em curso recuperada (' + r.lin.length + ' linha(s)).', 4500); }
   } catch (e) { toast('Aviso: armazenamento local indisponível (' + e.message + ')', 6000); }
