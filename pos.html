@@ -233,6 +233,8 @@ function construirArtigos(rows) {
   const cDes = find(x => x.includes('descri'), 2);
   const cPre = find(x => x.startsWith('preco'), 3);
   const cBal = find(x => x.includes('balanca'), -1);   // coluna opcional: regra de balança da família do artigo (ex.: 29:peso:2:3 ou 27:preco_total:3:2)
+  const cStk = [];   // colunas opcionais "Stock Arm 1", "Stock Arm 3"…: stock por armazém à data do ficheiro
+  h.forEach((x, i) => { if (/^stock\b/.test(x)) { const nm = String(rows[0][i]).replace(/^\s*stock\s*/i, '').trim(), m = nm.match(/(\d+)\s*$/); cStk.push([i, m ? 'Arm. ' + m[1] : (nm || 'Stock')]); } });
   const cTx = find(x => x.includes('taxas'), -1);   // coluna opcional: taxas associadas no ERP (ex.: VALOR DEPOSITO:1.000|01:1.000)
   const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
@@ -245,9 +247,11 @@ function construirArtigos(rows) {
     const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
     let rg = null;
     if (cBal >= 0) { const p = String(r[cBal] || '').trim().split(':'); if (p.length === 4 && p[0] && (p[1] === 'peso' || p[1] === 'preco_total') && /^\d+$/.test(p[0]) && +p[2] >= 0 && +p[3] >= 0) rg = { pre: p[0], tipo: p[1] === 'peso' ? 'peso' : 'preco', ni: +p[2], nd: +p[3] }; }
+    let stk = null;
+    if (cStk.length) { stk = cStk.map(([i, l]) => ({ l, q: numS(r[i]) })).filter(s => s.q !== null); if (!stk.length) stk = null; }
     let tx = null;
     if (cTx >= 0 && r[cTx]) { tx = String(r[cTx]).split('|').map(x => { const i = x.lastIndexOf(':'); return i > 0 ? { cod: x.slice(0, i).trim(), f: parseFloat(x.slice(i + 1)) || 0 } : null; }).filter(x => x && x.cod && x.f > 0); if (!tx.length) tx = null; }
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, tx, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, tx, stk, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
@@ -272,6 +276,10 @@ function lookup(c) {
   if (i == null) { const s = strip0(c); if (s) { i = idxBar0.get(s); if (i == null) i = idxCod0.get(s); } }
   return i == null ? null : artigos[i];
 }
+// número com sinal (o stock pode ser negativo)
+function numS(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return null; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) ? null : n; }
+const fmtStk = n => (Math.round(n * 1000) / 1000).toLocaleString('pt-PT', { maximumFractionDigits: 3 });
+const stockTexto = a => a && a.stk ? a.stk.map(s => s.l + ': ' + fmtStk(s.q)).join(' · ') : '';
 // fator de uma taxa associada ao artigo no ERP (0 se não tiver)
 function fatorTx(a, cod) { const t = a && a.tx ? a.tx.find(x => x.cod === cod) : null; return t ? t.f : 0; }
 function numPT(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return 0; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) || n < 0 ? 0 : n; }
@@ -440,13 +448,13 @@ function addArtigo(a, qtd) {
   const ex = venda.lin.find(l => l.cod === cod && !l.bal);
   if (ex) { ex.qtd = r3(ex.qtd + qtd); ex.total = r2(ex.qtd * ex.pu); return ex; }
   const vf = fatorTx(a, codTaxa);
-  const l = { id: novoId(), cod, desc: a.desc, qtd, pu, total: r2(qtd * pu), volta: vf > 0 || isVolta(cod), vf: vf > 0 ? vf : 1, bal: null };
+  const l = { id: novoId(), cod, desc: a.desc, qtd, pu, total: r2(qtd * pu), volta: vf > 0 || isVolta(cod), vf: vf > 0 ? vf : 1, stk: stockTexto(a), bal: null };
   venda.lin.push(l); taxasExtra(l, a); return l;
 }
 function addBalanca(b, a) {
   const pk = numPT(a.preco), cod = a.bar || a.cod || b.art;
   const vf = fatorTx(a, codTaxa);
-  const l = { id: novoId(), cod, desc: a.desc, qtd: 1, pu: pk, total: 0, volta: vf > 0 || isVolta(cod), vf: vf > 0 ? vf : 1, bal: b.tipo };
+  const l = { id: novoId(), cod, desc: a.desc, qtd: 1, pu: pk, total: 0, volta: vf > 0 || isVolta(cod), vf: vf > 0 ? vf : 1, stk: stockTexto(a), bal: b.tipo };
   if (b.tipo === 'peso') { l.qtd = r3(b.valor); l.total = r2(l.qtd * pk); }
   else if (pk > 0) { l.total = r2(b.valor); l.qtd = r3(b.valor / pk); }
   else { l.qtd = 1; l.pu = b.valor; l.total = r2(b.valor); }
@@ -472,7 +480,7 @@ let ultimaLinha = null;
 function render() {
   const T = totais();
   $('#lin').innerHTML = venda.lin.map(l => '<tr data-id="' + l.id + '"' + (l.id === ultimaLinha ? ' class="flash"' : '') + '>' +
-    '<td><div class="desc">' + esc(l.desc) + '</div><div class="cd">' + esc(l.cod) + (l.bal === 'peso' ? ' · ⚖️ ao peso' : l.bal === 'preco' ? ' · 🏷️ ao preço' : '') + '</div></td>' +
+    '<td><div class="desc">' + esc(l.desc) + '</div><div class="cd">' + esc(l.cod) + (l.bal === 'peso' ? ' · ⚖️ ao peso' : l.bal === 'preco' ? ' · 🏷️ ao preço' : '') + (l.stk ? '<br><small>Stock: ' + esc(l.stk) + '</small>' : '') + '</div></td>' +
     '<td class="num"><input type="text" data-f="qtd" inputmode="decimal" value="' + fmtQ(l.qtd) + '"></td>' +
     '<td class="num"><input type="text" data-f="pu" inputmode="decimal" value="' + r2(l.pu).toFixed(2).replace('.', ',') + '"></td>' +
     '<td class="num"><input type="text" data-f="total" inputmode="decimal" value="' + r2(l.total).toFixed(2).replace('.', ',') + '"></td>' +
@@ -557,7 +565,7 @@ function fecharPesquisa() { $('#pq').classList.remove('on'); focoCod(); }
 function pesquisar() {
   const t = $('#pq-in').value;
   pqRes = t.trim().length >= 2 ? pesquisarNome(t, $('#pq-modo').value, 100) : []; pqSel = 0;
-  $('#pq-res').innerHTML = pqRes.length ? pqRes.map((r, i) => '<div class="it' + (i === 0 ? ' sel' : '') + '" data-i="' + i + '"><div><b>' + esc(r.desc) + '</b><br><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><b>' + esc(fmtPreco(r.preco)) + '</b></div>').join('')
+  $('#pq-res').innerHTML = pqRes.length ? pqRes.map((r, i) => '<div class="it' + (i === 0 ? ' sel' : '') + '" data-i="' + i + '"><div><b>' + esc(r.desc) + '</b><br><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span>' + (stockTexto(r) ? '<br><span class="muted" style="font-size:12px">Stock: ' + esc(stockTexto(r)) + '</span>' : '') + '</div><b>' + esc(fmtPreco(r.preco)) + '</b></div>').join('')
     : '<div class="muted" style="padding:10px">' + (t.trim().length >= 2 ? 'Sem resultados. Podes usar "Artigo livre".' : 'Escreve pelo menos 2 letras.') + '</div>';
 }
 function escolherPesq(i) {

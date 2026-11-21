@@ -108,6 +108,7 @@
   <div id="iv-panel" class="card" hidden>
     <div id="iv-desc" class="big"></div>
     <div id="iv-preco" class="preco" style="font-size:30px;margin:2px 0" hidden></div>
+    <div id="iv-stk" class="muted" style="font-size:12px;margin-bottom:4px" hidden></div>
     <div id="iv-bal" class="warn" hidden></div>
     <label class="chk"><input type="checkbox" id="iv-volta"> ♻️ Tem depósito Volta (conta para a taxa)</label>
     <div id="iv-dep" class="muted" style="color:#1b6b2f;font-weight:bold" hidden></div>
@@ -259,6 +260,8 @@ function construirArtigos(rows) {
   const cDes = find(x => x.includes('descri'), 2);
   const cPre = find(x => x.startsWith('preco'), 3);
   const cBal = find(x => x.includes('balanca'), -1);   // coluna opcional: regra de balança da família do artigo (ex.: 29:peso:2:3 ou 27:preco_total:3:2)
+  const cStk = [];   // colunas opcionais "Stock Arm 1", "Stock Arm 3"…: stock por armazém à data do ficheiro
+  h.forEach((x, i) => { if (/^stock\b/.test(x)) { const nm = String(rows[0][i]).replace(/^\s*stock\s*/i, '').trim(), m = nm.match(/(\d+)\s*$/); cStk.push([i, m ? 'Arm. ' + m[1] : (nm || 'Stock')]); } });
   const cTx = find(x => x.includes('taxas'), -1);   // coluna opcional: taxas associadas no ERP (ex.: VALOR DEPOSITO:1.000|01:1.000)
   const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
@@ -271,9 +274,11 @@ function construirArtigos(rows) {
     const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
     let rg = null;
     if (cBal >= 0) { const p = String(r[cBal] || '').trim().split(':'); if (p.length === 4 && p[0] && (p[1] === 'peso' || p[1] === 'preco_total') && /^\d+$/.test(p[0]) && +p[2] >= 0 && +p[3] >= 0) rg = { pre: p[0], tipo: p[1] === 'peso' ? 'peso' : 'preco', ni: +p[2], nd: +p[3] }; }
+    let stk = null;
+    if (cStk.length) { stk = cStk.map(([i, l]) => ({ l, q: numS(r[i]) })).filter(s => s.q !== null); if (!stk.length) stk = null; }
     let tx = null;
     if (cTx >= 0 && r[cTx]) { tx = String(r[cTx]).split('|').map(x => { const i = x.lastIndexOf(':'); return i > 0 ? { cod: x.slice(0, i).trim(), f: parseFloat(x.slice(i + 1)) || 0 } : null; }).filter(x => x && x.cod && x.f > 0); if (!tx.length) tx = null; }
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, tx, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, tx, stk, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
@@ -298,6 +303,10 @@ function lookup(c) {
   if (i == null) { const s = strip0(c); if (s) { i = idxBar0.get(s); if (i == null) i = idxCod0.get(s); } }
   return i == null ? null : artigos[i];
 }
+// número com sinal (o stock pode ser negativo)
+function numS(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return null; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) ? null : n; }
+const fmtStk = n => (Math.round(n * 1000) / 1000).toLocaleString('pt-PT', { maximumFractionDigits: 3 });
+const stockTexto = a => a && a.stk ? a.stk.map(s => s.l + ': ' + fmtStk(s.q)).join(' · ') : '';
 // fator de uma taxa associada ao artigo no ERP (0 se não tiver)
 function fatorTx(a, cod) { const t = a && a.tx ? a.tx.find(x => x.cod === cod) : null; return t ? t.f : 0; }
 function numPT(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return 0; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) || n < 0 ? 0 : n; }
@@ -398,9 +407,12 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v17', VERSAO_DATA = '21/11/2026 14:30';
+const VERSAO = 'v18', VERSAO_DATA = '21/11/2026 16:45';
 // Novidades de cada versão em relação à anterior (a mais recente primeiro). Acrescenta aqui a cada versão nova.
 const NOVIDADES = [
+  { v: 'v18', data: '21/11/2026 16:45', itens: [
+    'Stock por armazém (Arm. 1 e Arm. 3) em letra pequena, à data da lista: em Preços, na pesquisa por nome e no painel das Guias/Inventário. Vem das colunas “Stock Arm 1” e “Stock Arm 3” do ficheiro de artigos.',
+    'POS: o stock aparece na pesquisa e em cada linha da venda (só informação, nunca impede a venda).' ] },
   { v: 'v17', data: '21/11/2026 14:30', itens: [
     'Volta automático: se o ficheiro de artigos tiver a coluna Taxas (artigos associados do Eticadata), os artigos com VALOR DEPOSITO ficam marcados sozinhos e a taxa do .plt soma quantidade × fator.',
     'POS: a taxa Volta é sempre 0,10 € e é acrescentada sozinha; outras taxas associadas (ex.: 01 no saco) entram como linha própria, com a quantidade do artigo.' ] },
@@ -549,7 +561,8 @@ function mostrarCartao(a, codigo, bal) {
   $('#pc-res').innerHTML = '';
   const eb = bal ? '<div class="warn">' + textoBalanca(bal, qtdBalanca(bal, a)) + (qtdBalanca(bal, a).semPreco ? '<br>Sem preço por kg no ficheiro.' : '') + '</div>' : '';
   $('#pc-card').innerHTML = '<div class="card"><div class="big">' + esc(a.desc) + '</div><div class="preco">' + esc(fmtPreco(a.preco)) + (bal ? '<span class="muted" style="font-size:16px"> /kg</span>' : '') + '</div>' + eb +
-    '<div class="muted">Cód. artigo: ' + esc(a.cod || '-') + '<br>Cód. barras: ' + esc(a.bar || '-') + '</div></div>';
+    '<div class="muted">Cód. artigo: ' + esc(a.cod || '-') + '<br>Cód. barras: ' + esc(a.bar || '-') + '</div>' +
+    (stockTexto(a) ? '<div class="muted" style="font-size:12px;margin-top:6px">Stock (à data da lista) — ' + esc(stockTexto(a)) + '</div>' : '') + '</div>';
 }
 function pcBuscar(txt) {
   const t = limpar(txt);
@@ -562,7 +575,7 @@ function pcBuscar(txt) {
   const res = pesquisarNome(t, $('#pc-modo').value, 100);
   if (!res.length) { if (t.length >= 2) $('#pc-res').innerHTML = '<div class="bad">Não encontrado: ' + esc(t) + '</div>'; return; }
   $('#pc-res').innerHTML = '<div class="muted" style="margin:6px 0">' + res.length + (res.length >= 100 ? '+' : '') + ' resultado(s)</div>' +
-    res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
+    res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span>' + (stockTexto(r) ? '<span class="muted" style="font-size:12px">' + esc(stockTexto(r)) + '</span>' : '') + '</div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
   pcBuscar._res = res;
 }
 $('#pc-res').addEventListener('click', e => { const it = e.target.closest('.item'); if (it && pcBuscar._res) mostrarCartao(pcBuscar._res[+it.dataset.i]); });
@@ -661,6 +674,7 @@ function atualizarPainel(manterQtd) {
   cur.final = fin; cur.desc = a ? a.desc : '';
   $('#iv-desc').innerHTML = a ? esc(a.desc) : '<span style="color:var(--er)">ARTIGO FORA DA LISTA</span>';
   const pv = $('#iv-preco'); pv.hidden = !(a && a.preco); if (a && a.preco) pv.textContent = 'Preço de venda: ' + fmtPreco(a.preco);
+  { const st = stockTexto(a); const es = $('#iv-stk'); es.hidden = !st; es.textContent = st ? 'Stock (à data da lista) — ' + st : ''; }
   cur.art = a; mostrarDep();
   cur.balq = cur.bal ? qtdBalanca(cur.bal, a) : null;
   { const eb = $('#iv-bal'); eb.hidden = !cur.bal; if (cur.bal) eb.innerHTML = textoBalanca(cur.bal, cur.balq) + (cur.balq.semPreco ? '<br><b style="color:var(--er)">Sem preço por kg no ficheiro de artigos: escreve tu a quantidade em kg.</b>' : '') + '<br>Confirma a quantidade (kg) antes de guardar.'; }
@@ -722,7 +736,7 @@ function ivSugestoes(txt) {
   if (t.length < 1) { box.innerHTML = ''; return; }
   const res = t.replace(/\s+/g, '').length < (numerico ? 2 : 3) ? [] : pesquisarNome(t, 'contem', 30);   // 1 dígito: só a opção de usar o código escrito
   ivSugestoes._res = res;
-  let h = res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span></div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
+  let h = res.map((r, i) => '<div class="item click" data-i="' + i + '"><div class="t"><b>' + esc(r.desc) + '</b><span class="muted">' + esc([r.cod, r.bar].filter(Boolean).join(' · ')) + '</span>' + (stockTexto(r) ? '<span class="muted" style="font-size:12px">' + esc(stockTexto(r)) + '</span>' : '') + '</div><div class="q">' + esc(fmtPreco(r.preco)) + '</div></div>').join('');
   const manual = '<div class="item click" data-manual="1"><div class="t"><b>➕ Usar o código escrito: ' + esc(t.replace(/\s+/g, '')) + '</b><span class="muted">para códigos que não estão na lista ou que a câmara não lê</span></div></div>';
   h = manual + h;
   box.innerHTML = h;
