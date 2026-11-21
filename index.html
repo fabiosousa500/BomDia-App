@@ -218,8 +218,16 @@ function toast(t, ms) {
 }
 
 /* ---------- CSV ---------- */
+// Lê o ficheiro em qualquer codificação comum: UTF-16 (BOM), UTF-8 (com ou sem BOM) ou Windows-1252
+function decodificarCSV(buf) {
+  const u = new Uint8Array(buf);
+  if (u.length >= 2 && u[0] === 0xFF && u[1] === 0xFE) return new TextDecoder('utf-16le').decode(u.subarray(2));
+  if (u.length >= 2 && u[0] === 0xFE && u[1] === 0xFF) return new TextDecoder('utf-16be').decode(u.subarray(2));
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u).replace(/^\uFEFF/, ''); }
+  catch (e) { return new TextDecoder('windows-1252').decode(u); }
+}
 function parseCSV(text) {
-  text = text.replace(/^﻿/, '');
+  text = text.replace(/^\uFEFF/, '');
   const first = text.split(/\r?\n/, 1)[0];
   let d = ',', best = -1;
   for (const x of [';', ',', '\t']) { const c = first.split(x).length; if (c > best) { best = c; d = x; } }
@@ -227,7 +235,7 @@ function parseCSV(text) {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
-    else if (ch === '"') q = true;
+    else if (ch === '"' && cur === '') q = true;   // aspas só abrem no início do campo (uma aspa no meio do nome não estraga a linha)
     else if (ch === d) { row.push(cur); cur = ''; }
     else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
     else if (ch === '\r') { }
@@ -239,6 +247,7 @@ function parseCSV(text) {
 
 /* ---------- artigos ---------- */
 let artigos = [], idxBar = new Map(), idxCod = new Map(), idxBar0 = new Map(), idxCod0 = new Map();
+let balIdx = new Map(), balForm = new Map(), nUn = 0;   // regras de balança por família (coluna Balança do CSV) e nº de artigos distintos
 const strip0 = s => s.replace(/^0+/, '');
 
 function construirArtigos(rows) {
@@ -249,26 +258,34 @@ function construirArtigos(rows) {
   const cCod = find(x => x.includes('artigo') && x.includes('cod'), 1);
   const cDes = find(x => x.includes('descri'), 2);
   const cPre = find(x => x.startsWith('preco'), 3);
+  const cBal = find(x => x.includes('balanca'), -1);   // coluna opcional: regra de balança da família do artigo (ex.: 29:peso:2:3 ou 27:preco_total:3:2)
   const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
   for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    const desc = (r[cDes] || '').trim();
+    let r = rows[i];
+    if (r.length > h.length && cDes < h.length - 1) { const ex = r.length - h.length; r = r.slice(0, cDes).concat([r.slice(cDes, cDes + ex + 1).join(';')], r.slice(cDes + ex + 1)); }   // descrição com ';' no meio: volta a juntar
+    const desc = (r[cDes] || '').replace(/\bamp;/g, '&').replace(/\s+/g, ' ').trim();
     const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
     if (!desc && !bar && !cod) continue;
     const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    let rg = null;
+    if (cBal >= 0) { const p = String(r[cBal] || '').trim().split(':'); if (p.length === 4 && p[0] && (p[1] === 'peso' || p[1] === 'preco_total') && /^\d+$/.test(p[0]) && +p[2] >= 0 && +p[3] >= 0) rg = { pre: p[0], tipo: p[1] === 'peso' ? 'peso' : 'preco', ni: +p[2], nd: +p[3] }; }
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
 function indexar() {
-  idxBar = new Map(); idxCod = new Map(); idxBar0 = new Map(); idxCod0 = new Map();
+  idxBar = new Map(); idxCod = new Map(); idxBar0 = new Map(); idxCod0 = new Map(); balIdx = new Map(); balForm = new Map();
+  const un = new Set();
   artigos.forEach((a, i) => {
+    un.add(a.cod || a.bar || i);
+    if (a.rg && a.bar) { const k = a.rg.pre + '|' + a.rg.ni + '|' + a.rg.nd + '|' + a.rg.tipo; balForm.set(k, a.rg); balIdx.set(k + '|' + a.bar, a); }
     if (a.b === undefined) { a.b = (a.bar || '').toLowerCase(); a.c = (a.cod || '').toLowerCase(); }
     if (a.bar) { if (!idxBar.has(a.bar)) idxBar.set(a.bar, i); const s = strip0(a.bar); if (s && !idxBar0.has(s)) idxBar0.set(s, i); }
     if (a.cod) { if (!idxCod.has(a.cod)) idxCod.set(a.cod, i); const s = strip0(a.cod); if (s && !idxCod0.has(s)) idxCod0.set(s, i); }
   });
-  $('#hd-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados';
+  nUn = un.size;
+  $('#hd-info').textContent = artigos.length ? nUn.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados';
 }
 function lookup(c) {
   if (!c) return null;
@@ -307,8 +324,8 @@ function pesquisarNome(txt, modo, limite) {
   }
   const soNumeros = /^[\d\s-]+$/.test(t);
   const todos = soNumeros ? iniciam.concat(contem, nomes) : nomes.concat(iniciam, contem);
-  const vistos = new Set(), out = [];
-  for (const a of todos) { if (!vistos.has(a)) { vistos.add(a); out.push(a); if (out.length >= limite) break; } }
+  const vistos = new Set(), out = [];   // cada artigo aparece uma só vez, mesmo com vários códigos de barras
+  for (const a of todos) { const k = a.cod || a.bar || a; if (!vistos.has(k)) { vistos.add(k); out.push(a); if (out.length >= limite) break; } }
   return out;
 }
 
@@ -327,10 +344,25 @@ function converter(l) {
 /* ---------- etiquetas de balança: 29 = peso (kg), 27 = preço ---------- */
 // 29 + 5 dígitos do artigo + 2 inteiros + 3 decimais (kg) + controlo   |   27 + 5 dígitos do artigo + 3 inteiros + 2 decimais (€) + controlo
 function parseBalanca(raw) {
-  const m = String(raw == null ? '' : raw).replace(/\s+/g, '').match(/^(27|29)(\d{5})(\d{5})\d$/);
+  const s = String(raw == null ? '' : raw).replace(/\s+/g, '');
+  if (!/^\d{13}$/.test(s)) return null;
+  if (balIdx.size) {   // regras por família (coluna Balança do ficheiro): só é etiqueta de balança se prefixo, dígitos e artigo coincidirem
+    if (idxBar.has(s)) return null;   // é um código de barras normal do ficheiro
+    for (const g of balForm.values()) {
+      if (!s.startsWith(g.pre)) continue;
+      const na = 12 - g.pre.length - g.ni - g.nd; if (na < 1) continue;
+      const art = s.substr(g.pre.length, na);
+      const ab = balIdx.get(g.pre + '|' + g.ni + '|' + g.nd + '|' + g.tipo + '|' + art);
+      if (!ab) continue;
+      const v = parseInt(s.substr(g.pre.length + na, g.ni + g.nd), 10);
+      return { tipo: g.tipo, art, valor: v / Math.pow(10, g.nd), ab };
+    }
+    return null;
+  }
+  const m = s.match(/^(27|29)(\d{5})(\d{5})\d$/);   // ficheiro sem coluna Balança: regra antiga
   if (!m) return null;
   const peso = m[1] === '29', v = parseInt(m[3], 10);
-  return { tipo: peso ? 'peso' : 'preco', art: m[2], valor: peso ? v / 1000 : v / 100 };
+  return { tipo: peso ? 'peso' : 'preco', art: m[2], valor: peso ? v / 1000 : v / 100, ab: null };
 }
 // quantidade em kg (3 casas): ao peso é a da etiqueta; ao preço é preço da etiqueta ÷ preço por kg do ficheiro
 function qtdBalanca(b, a) {
@@ -359,9 +391,14 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v15', VERSAO_DATA = '20/11/2026 20:10';
+const VERSAO = 'v16', VERSAO_DATA = '21/11/2026 13:45';
 // Novidades de cada versão em relação à anterior (a mais recente primeiro). Acrescenta aqui a cada versão nova.
 const NOVIDADES = [
+  { v: 'v16', data: '21/11/2026 13:45', itens: [
+    'Etiquetas de balança: a app passa a seguir a regra da família de cada artigo (prefixo, peso ou preço, nº de dígitos), lida da coluna Balança do ficheiro de artigos. Um EAN estrangeiro que comece por 27, 29, 84… já não é confundido com uma etiqueta de balança.',
+    'Pesquisa por nome: cada artigo aparece só uma vez, mesmo que tenha vários códigos de barras.',
+    'A lista de artigos pode vir do Eticadata em UTF-16, UTF-8 ou Windows-1252, e descrições com “;” ou “amp;” já não desalinham as colunas.',
+    'O número de artigos conta artigos distintos, não linhas do ficheiro.' ] },
   { v: 'v15', data: '20/11/2026 20:10', itens: [
     'Em Artigos: aparece a data e hora desta versão e as novidades em relação à versão anterior.',
     'Em Artigos: aparece a data e hora em que a lista de artigos foi atualizada neste telemóvel e a da última verificação.' ] },
@@ -509,7 +546,7 @@ function pcBuscar(txt) {
   $('#pc-card').innerHTML = ''; $('#pc-res').innerHTML = '';
   if (!t) return;
   const bal = parseBalanca(t);
-  if (bal) { const ab = lookup(bal.art); if (ab) return mostrarCartao(ab, null, bal); $('#pc-res').innerHTML = '<div class="bad">Etiqueta de balança: artigo ' + esc(bal.art) + ' não encontrado</div>'; return; }
+  if (bal) { const ab = bal.ab || lookup(bal.art); if (ab) return mostrarCartao(ab, null, bal); $('#pc-res').innerHTML = '<div class="bad">Etiqueta de balança: artigo ' + esc(bal.art) + ' não encontrado</div>'; return; }
   let a = lookup(t) || lookup(converter(t));
   if (a) return mostrarCartao(a);
   const res = pesquisarNome(t, $('#pc-modo').value, 100);
@@ -830,7 +867,7 @@ async function infoArtigos(data) {
   const f = t => new Date(t).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' });
   let mudou = null, pub = null;
   try { mudou = await kvGet('listaMudou'); pub = await kvGet('listaPub'); } catch (e) { }
-  el.innerHTML = '<b>' + artigos.length.toLocaleString('pt-PT') + ' artigos</b> carregados.' +
+  el.innerHTML = '<b>' + nUn.toLocaleString('pt-PT') + ' artigos</b> carregados.' +
     '<br>Lista atualizada neste telemóvel em: <b>' + (mudou ? f(mudou) : (data ? f(data) : 'desconhecido')) + '</b>' +
     (pub ? '<br>Ficheiro publicado no GitHub em: ' + f(pub) : '') +
     (data ? '<br>Última verificação: ' + f(data) : '');
@@ -840,13 +877,13 @@ $('#ar-file').addEventListener('change', async e => {
   $('#loading').style.display = 'flex';
   await new Promise(r => setTimeout(r, 50));
   try {
-    const rows = parseCSV(await f.text());
+    const rows = parseCSV(decodificarCSV(await f.arrayBuffer()));
     const novos = construirArtigos(rows);
     if (!novos.length) { toast('Não encontrei artigos neste ficheiro.', 4000); }
     else {
       artigos = novos; indexar();
       await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvDel('listaHash'); await kvSet('listaMudou', Date.now()); await kvDel('listaPub');
-      infoArtigos(Date.now()); toast('✔ ' + artigos.length + ' artigos carregados.');
+      infoArtigos(Date.now()); toast('✔ ' + nUn + ' artigos carregados.');
     }
   } catch (err) { toast('Erro a ler o ficheiro: ' + err.message, 5000); }
   $('#loading').style.display = 'none'; e.target.value = '';
@@ -863,7 +900,7 @@ async function atualizarLista(manual) {
   try {
     const r = await fetch(LISTA_URL, { cache: 'no-cache' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    const txt = await r.text();
+    const txt = decodificarCSV(await r.arrayBuffer());
     const h = hashTexto(txt);
     if (artigos.length && h === (await kvGet('listaHash'))) {
       await kvSet('artigosData', Date.now()); infoArtigos(Date.now());
@@ -876,7 +913,7 @@ async function atualizarLista(manual) {
     await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvSet('listaHash', h); await kvSet('listaMudou', Date.now());
     { const lm = Date.parse(r.headers.get('last-modified') || ''); await kvSet('listaPub', isNaN(lm) ? null : lm); }
     infoArtigos(Date.now());
-    toast('✔ Lista atualizada: ' + artigos.length.toLocaleString('pt-PT') + ' artigos');
+    toast('✔ Lista atualizada: ' + nUn.toLocaleString('pt-PT') + ' artigos');
     return true;
   } catch (e) {
     if (manual || !artigos.length) toast('Não consegui atualizar a lista (' + e.message + '). ' + (artigos.length ? 'Continua a usar a última lista guardada.' : 'Liga-te à internet e tenta outra vez.'), 5000);

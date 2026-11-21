@@ -192,8 +192,16 @@ function toast(t, ms) {
 }
 
 /* ---------- CSV ---------- */
+// Lê o ficheiro em qualquer codificação comum: UTF-16 (BOM), UTF-8 (com ou sem BOM) ou Windows-1252
+function decodificarCSV(buf) {
+  const u = new Uint8Array(buf);
+  if (u.length >= 2 && u[0] === 0xFF && u[1] === 0xFE) return new TextDecoder('utf-16le').decode(u.subarray(2));
+  if (u.length >= 2 && u[0] === 0xFE && u[1] === 0xFF) return new TextDecoder('utf-16be').decode(u.subarray(2));
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u).replace(/^\uFEFF/, ''); }
+  catch (e) { return new TextDecoder('windows-1252').decode(u); }
+}
 function parseCSV(text) {
-  text = text.replace(/^﻿/, '');
+  text = text.replace(/^\uFEFF/, '');
   const first = text.split(/\r?\n/, 1)[0];
   let d = ',', best = -1;
   for (const x of [';', ',', '\t']) { const c = first.split(x).length; if (c > best) { best = c; d = x; } }
@@ -201,7 +209,7 @@ function parseCSV(text) {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
-    else if (ch === '"') q = true;
+    else if (ch === '"' && cur === '') q = true;   // aspas só abrem no início do campo (uma aspa no meio do nome não estraga a linha)
     else if (ch === d) { row.push(cur); cur = ''; }
     else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
     else if (ch === '\r') { }
@@ -213,6 +221,7 @@ function parseCSV(text) {
 
 /* ---------- artigos ---------- */
 let artigos = [], idxBar = new Map(), idxCod = new Map(), idxBar0 = new Map(), idxCod0 = new Map();
+let balIdx = new Map(), balForm = new Map(), nUn = 0;   // regras de balança por família (coluna Balança do CSV) e nº de artigos distintos
 const strip0 = s => s.replace(/^0+/, '');
 
 function construirArtigos(rows) {
@@ -223,26 +232,34 @@ function construirArtigos(rows) {
   const cCod = find(x => x.includes('artigo') && x.includes('cod'), 1);
   const cDes = find(x => x.includes('descri'), 2);
   const cPre = find(x => x.startsWith('preco'), 3);
+  const cBal = find(x => x.includes('balanca'), -1);   // coluna opcional: regra de balança da família do artigo (ex.: 29:peso:2:3 ou 27:preco_total:3:2)
   const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
   for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    const desc = (r[cDes] || '').trim();
+    let r = rows[i];
+    if (r.length > h.length && cDes < h.length - 1) { const ex = r.length - h.length; r = r.slice(0, cDes).concat([r.slice(cDes, cDes + ex + 1).join(';')], r.slice(cDes + ex + 1)); }   // descrição com ';' no meio: volta a juntar
+    const desc = (r[cDes] || '').replace(/\bamp;/g, '&').replace(/\s+/g, ' ').trim();
     const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
     if (!desc && !bar && !cod) continue;
     const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    let rg = null;
+    if (cBal >= 0) { const p = String(r[cBal] || '').trim().split(':'); if (p.length === 4 && p[0] && (p[1] === 'peso' || p[1] === 'preco_total') && /^\d+$/.test(p[0]) && +p[2] >= 0 && +p[3] >= 0) rg = { pre: p[0], tipo: p[1] === 'peso' ? 'peso' : 'preco', ni: +p[2], nd: +p[3] }; }
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
 function indexar() {
-  idxBar = new Map(); idxCod = new Map(); idxBar0 = new Map(); idxCod0 = new Map();
+  idxBar = new Map(); idxCod = new Map(); idxBar0 = new Map(); idxCod0 = new Map(); balIdx = new Map(); balForm = new Map();
+  const un = new Set();
   artigos.forEach((a, i) => {
+    un.add(a.cod || a.bar || i);
+    if (a.rg && a.bar) { const k = a.rg.pre + '|' + a.rg.ni + '|' + a.rg.nd + '|' + a.rg.tipo; balForm.set(k, a.rg); balIdx.set(k + '|' + a.bar, a); }
     if (a.b === undefined) { a.b = (a.bar || '').toLowerCase(); a.c = (a.cod || '').toLowerCase(); }
     if (a.bar) { if (!idxBar.has(a.bar)) idxBar.set(a.bar, i); const s = strip0(a.bar); if (s && !idxBar0.has(s)) idxBar0.set(s, i); }
     if (a.cod) { if (!idxCod.has(a.cod)) idxCod.set(a.cod, i); const s = strip0(a.cod); if (s && !idxCod0.has(s)) idxCod0.set(s, i); }
   });
-  $('#hd-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados';
+  nUn = un.size;
+  $('#hd-info').textContent = artigos.length ? nUn.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados';
 }
 function lookup(c) {
   if (!c) return null;
@@ -281,8 +298,8 @@ function pesquisarNome(txt, modo, limite) {
   }
   const soNumeros = /^[\d\s-]+$/.test(t);
   const todos = soNumeros ? iniciam.concat(contem, nomes) : nomes.concat(iniciam, contem);
-  const vistos = new Set(), out = [];
-  for (const a of todos) { if (!vistos.has(a)) { vistos.add(a); out.push(a); if (out.length >= limite) break; } }
+  const vistos = new Set(), out = [];   // cada artigo aparece uma só vez, mesmo com vários códigos de barras
+  for (const a of todos) { const k = a.cod || a.bar || a; if (!vistos.has(k)) { vistos.add(k); out.push(a); if (out.length >= limite) break; } }
   return out;
 }
 
@@ -302,10 +319,25 @@ function converter(l) {
 /* ---------- etiquetas de balança: 29 = peso (kg), 27 = preço ---------- */
 // 29 + 5 dígitos do artigo + 2 inteiros + 3 decimais (kg) + controlo   |   27 + 5 dígitos do artigo + 3 inteiros + 2 decimais (€) + controlo
 function parseBalanca(raw) {
-  const m = String(raw == null ? '' : raw).replace(/\s+/g, '').match(/^(27|29)(\d{5})(\d{5})\d$/);
+  const s = String(raw == null ? '' : raw).replace(/\s+/g, '');
+  if (!/^\d{13}$/.test(s)) return null;
+  if (balIdx.size) {   // regras por família (coluna Balança do ficheiro): só é etiqueta de balança se prefixo, dígitos e artigo coincidirem
+    if (idxBar.has(s)) return null;   // é um código de barras normal do ficheiro
+    for (const g of balForm.values()) {
+      if (!s.startsWith(g.pre)) continue;
+      const na = 12 - g.pre.length - g.ni - g.nd; if (na < 1) continue;
+      const art = s.substr(g.pre.length, na);
+      const ab = balIdx.get(g.pre + '|' + g.ni + '|' + g.nd + '|' + g.tipo + '|' + art);
+      if (!ab) continue;
+      const v = parseInt(s.substr(g.pre.length + na, g.ni + g.nd), 10);
+      return { tipo: g.tipo, art, valor: v / Math.pow(10, g.nd), ab };
+    }
+    return null;
+  }
+  const m = s.match(/^(27|29)(\d{5})(\d{5})\d$/);   // ficheiro sem coluna Balança: regra antiga
   if (!m) return null;
   const peso = m[1] === '29', v = parseInt(m[3], 10);
-  return { tipo: peso ? 'peso' : 'preco', art: m[2], valor: peso ? v / 1000 : v / 100 };
+  return { tipo: peso ? 'peso' : 'preco', art: m[2], valor: peso ? v / 1000 : v / 100, ab: null };
 }
 // quantidade em kg (3 casas): ao peso é a da etiqueta; ao preço é preço da etiqueta ÷ preço por kg do ficheiro
 function qtdBalanca(b, a) {
@@ -363,20 +395,20 @@ async function kvKeysPV() {
 }
 
 /* ---- lista de artigos ---- */
-function infoArtigos() { $('#hd-info').textContent = artigos.length ? artigos.length.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados'; }
+function infoArtigos() { $('#hd-info').textContent = artigos.length ? nUn.toLocaleString('pt-PT') + ' artigos' : 'sem artigos carregados'; }
 function hashTexto(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + '-' + s.length; }
 async function atualizarLista() {
   if (typeof LISTA_URL === 'undefined' || !LISTA_URL) return false;
   try {
     const r = await fetch(LISTA_URL, { cache: 'no-cache' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    const txt = await r.text(), h = hashTexto(txt);
+    const txt = decodificarCSV(await r.arrayBuffer()), h = hashTexto(txt);
     if (artigos.length && h === (await kvGet('listaHash'))) return true;
     const novos = construirArtigos(parseCSV(txt));
     if (!novos.length) throw new Error('lista vazia');
     artigos = novos; indexar();
     await kvSet('artigos', artigos); await kvSet('artigosData', Date.now()); await kvSet('listaHash', h);
-    infoArtigos(); toast('✔ Lista atualizada: ' + artigos.length.toLocaleString('pt-PT') + ' artigos');
+    infoArtigos(); toast('✔ Lista atualizada: ' + nUn.toLocaleString('pt-PT') + ' artigos');
     return true;
   } catch (e) {
     if (!artigos.length) toast('Não consegui carregar a lista (' + e.message + '). Liga-te à internet e recarrega.', 6000);
@@ -444,7 +476,7 @@ function processar(txt) {
   const t = limpar(txt); if (!t) return;
   const bal = parseBalanca(t);
   if (bal) {
-    const a = lookup(bal.art);
+    const a = bal.ab || lookup(bal.art);
     if (!a) { toast('Etiqueta de balança: artigo ' + bal.art + ' não encontrado na lista.', 4000); return; }
     const l = addBalanca(bal, a); ultimaLinha = l.id; $('#cod').value = ''; alterou(); focoQtd(l.id);
     if (!numPT(a.preco)) toast('Sem preço por kg no ficheiro: confirma o preço e a quantidade.', 4500);
