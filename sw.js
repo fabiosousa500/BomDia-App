@@ -1,5 +1,5 @@
-const C = 'precos-inv-v18';
-const FICHEIROS = ['./', 'index.html', 'pos.html', 'config.js', 'manifest.json', 'logo.png', 'icon-192.png', 'icon-512.png'];
+const C = 'precos-inv-v19';
+const FICHEIROS = ['./', 'index.html', 'pos.html', 'config.js','faturas.js', 'manifest.json', 'logo.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(C).then(c => c.addAll(FICHEIROS)).then(() => self.skipWaiting()));

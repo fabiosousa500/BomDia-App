@@ -67,6 +67,7 @@
   <button data-t="precos" class="on">💶 Preços</button>
   <button data-t="inv">📦 Guias/Inventário</button>
   <button data-t="leit">📋 Leituras</button>
+  <button data-t="fat">🧾 Faturas</button>
   <button data-t="art">⚙️ Artigos</button>
 </nav>
 <div id="doc-bar" hidden style="background:#fff;padding:10px 12px;border-bottom:1px solid #ccd">
@@ -95,8 +96,8 @@
 
 <!-- ============ INVENTÁRIO ============ -->
 <section id="inv">
-  <label>Código de armazém deste documento</label>
-  <input type="text" id="iv-arm" placeholder="ex: 01" autocomplete="off">
+  <label>Armazém deste documento</label>
+  <select id="iv-arm"><option value="1">1 · Bom Dia Vales</option><option value="3">3 · Bom Dia Cais</option></select>
   <div class="row">
     <button class="pri" id="iv-cam" style="font-size:20px;padding:16px">📷 Ler código</button>
   </div>
@@ -147,6 +148,8 @@
 </section>
 
 <!-- ============ ARTIGOS ============ -->
+<section id="fat"></section>
+
 <section id="art">
   <div class="card">
     <div class="big">Lista de artigos</div>
@@ -407,9 +410,13 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v18', VERSAO_DATA = '21/11/2026 16:45';
+const VERSAO = 'v19', VERSAO_DATA = '22/11/2026 12:00';
 // Novidades de cada versão em relação à anterior (a mais recente primeiro). Acrescenta aqui a cada versão nova.
 const NOVIDADES = [
+  { v: 'v19', data: '22/11/2026 12:00', itens: [
+    'Novo separador Faturas: carrega a fatura do fornecedor (Excel .xls/.xlsx, CSV ou texto colado), escolhe o armazém de destino, pica os artigos confirmando a quantidade recebida e gera o .plt. Também dá para gerar o .plt logo, sem picar.',
+    'Linhas não picadas contam como recebido 0; no fim há um relatório de artigos em falta, a menos e a mais. Artigos novos aparecem com a descrição da fatura.',
+    'Guias/Inventário: o armazém passa a ser uma escolha entre 1 · Bom Dia Vales e 3 · Bom Dia Cais.' ] },
   { v: 'v18', data: '21/11/2026 16:45', itens: [
     'Stock por armazém (Arm. 1 e Arm. 3) em letra pequena, à data da lista: em Preços, na pesquisa por nome e no painel das Guias/Inventário. Vem das colunas “Stock Arm 1” e “Stock Arm 3” do ficheiro de artigos.',
     'POS: o stock aparece na pesquisa e em cada linha da venda (só informação, nunca impede a venda).' ] },
@@ -552,6 +559,7 @@ function irPara(t) {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   $('#doc-bar').hidden = !(t === 'inv' || t === 'leit');
   if (t === 'leit') renderLeituras();
+  if (t === 'fat') ftAbrirSeparador();
   window.scrollTo(0, 0);
 }
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) irPara(b.dataset.t); });
@@ -606,7 +614,7 @@ function abrirDoc(id) {
   const d = docs.find(x => x.id === id) || docs[0];
   docId = d.id; leit = d.leit;
   leit.forEach(l => { if (!l.id) l.id = novoId(); });   // leituras de versões anteriores não tinham identificador
-  $('#iv-arm').value = d.arm || '';
+  { const sel = $('#iv-arm'), a = d.arm || '1'; if (![...sel.options].some(o => o.value === a)) sel.add(new Option(a + ' (antigo)', a)); sel.value = a; if (d.arm !== a) { d.arm = a; kvSet('docs', docs); } }
   kvSet('docId', docId);
   ivFechar(); renderDocs(); resumo(); renderLeituras();
 }
@@ -775,7 +783,7 @@ $('#iv-volta').addEventListener('change', async e => {
 });
 $('#iv-qtd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ivGuardar('subst'); } });
 $('#iv-dias').addEventListener('input', e => { kvSet('avisoDias', e.target.value.trim()); if (cur && cur.gs) mostrarGS1(cur.gs); });
-$('#iv-arm').addEventListener('input', e => { const d = docAtual(); if (d) { d.arm = e.target.value.trim(); kvSet('docs', docs); } });
+$('#iv-arm').addEventListener('change', e => { const d = docAtual(); if (d) { d.arm = e.target.value.trim(); kvSet('docs', docs); } });
 
 /* ---------- LEITURAS e exportação ---------- */
 function precoDe(l) { const a = lookup(l.final); return a && a.preco ? fmtPreco(a.preco) + (a.dep > 0 ? ' · ♻️ ' + eur(a.dep * l.qtd) : '') : ''; }
@@ -817,7 +825,7 @@ function nomePlt(arm, nomeDoc) {
 function prepararExport() {
   const doc = docAtual();
   const arm = $('#iv-arm').value.trim();
-  if (!arm) { irPara('inv'); $('#iv-arm').focus(); toast('Escreve primeiro o código de armazém.', 3500); return null; }
+  if (!arm) { irPara('inv'); $('#iv-arm').focus(); toast('Escolhe primeiro o armazém.', 3500); return null; }
   if (!leit.length) { toast('Não há leituras para exportar.'); return null; }
   const texto = construirPlt(arm);
   return { texto, nome: nomePlt(arm, doc.nome), assunto: doc.nome + ' (armazém ' + arm + ')', linhas: texto.split('\r\n').filter(Boolean).length, doc: doc.nome };
@@ -983,6 +991,7 @@ $('#ar-upd').addEventListener('click', async () => {
   }
 })();
 </script>
+<script src="faturas.js"></script>
 <div id="dlg"><div class="box"><h3>Bom Dia São Jorge</h3><p id="dlg-m"></p><input type="text" id="dlg-i" autocomplete="off"><div class="row"><button class="sec" id="dlg-c">Cancelar</button><button class="pri" id="dlg-ok">OK</button></div></div></div>
 </body>
 </html>
