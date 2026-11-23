@@ -154,10 +154,41 @@ function ftLerXls(buf) {
   return rows.map(r => r || []);
 }
 
+// PDF com texto (faturas geradas por programa): lê o texto com o pdf.js, que vem com a app
+let ftPdfjs = null;
+async function ftLerPdf(buf) {
+  if (!ftPdfjs) { ftPdfjs = await import('./pdf.min.mjs'); ftPdfjs.GlobalWorkerOptions.workerSrc = new URL('./pdf.worker.min.mjs', location.href).href; }
+  const doc = await ftPdfjs.getDocument({ data: new Uint8Array(buf) }).promise, linhas = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const tc = await (await doc.getPage(n)).getTextContent(), its = tc.items.filter(i => i.str && i.str.trim());
+    its.sort((a, b) => (b.transform[5] - a.transform[5]) || (a.transform[4] - b.transform[4]));
+    let cur = [], y = null;
+    const fecha = () => { if (cur.length) { cur.sort((a, b) => a.transform[4] - b.transform[4]); linhas.push(cur.map(i => i.str.trim()).join(' ')); } cur = []; };
+    its.forEach(i => { if (y === null || Math.abs(i.transform[5] - y) > 2.5) { fecha(); y = i.transform[5]; } cur.push(i); });
+    fecha();
+  }
+  return linhas.join('\n');
+}
+// várias faturas no mesmo PDF: separa pelo número ("FACTURA: 000059054")
+function ftGrupos(texto) {
+  const g = [], idx = new Map(); let atual = null;
+  texto.split('\n').forEach(l => {
+    const m = /FACTURA\s*:?\s*(?:FT\s*)?([\w\/.-]*\d[\w\/.-]*)/i.exec(l);
+    if (m) { if (!idx.has(m[1])) { idx.set(m[1], g.length); g.push({ id: m[1], linhas: [] }); } atual = g[idx.get(m[1])]; }
+    if (atual) atual.linhas.push(l);
+  });
+  return g.length ? g.map(x => ({ id: x.id, texto: x.linhas.join('\n') })) : [{ id: '', texto }];
+}
+
 async function ftLerFicheiro(f) {
   const nome = (f.name || '').toLowerCase(), buf = await f.arrayBuffer(), u = new Uint8Array(buf);
   if (nome.endsWith('.xlsx') || (u[0] === 0x50 && u[1] === 0x4B)) return { tipo: 'tabela', rows: await ftLerXlsx(buf) };
   if (nome.endsWith('.xls') || (u[0] === 0xD0 && u[1] === 0xCF)) return { tipo: 'tabela', rows: ftLerXls(buf) };
+  if (nome.endsWith('.pdf') || (u[0] === 0x25 && u[1] === 0x50 && u[2] === 0x44)) {
+    const texto = await ftLerPdf(buf);
+    if (!/\d{12,14}/.test(texto)) return { tipo: 'pdf', texto: '', grupos: [] };
+    return { tipo: 'pdf', texto, grupos: ftGrupos(texto) };
+  }
   const txt = decodificarCSV(buf);
   const rows = parseCSV(txt);
   return { tipo: 'csv', rows, texto: txt };
@@ -215,24 +246,28 @@ function ftLinhasDeTabela(rows) {
   });
   return out;
 }
-// Texto colado (de um PDF, ou copiado de uma foto): uma linha por artigo
+// Texto colado (de um PDF, ou copiado de uma foto): uma linha por artigo.
+// modo: 'auto' | 'iN' (N-ésimo número a seguir ao código, a partir de 0) | 'fN' (N-ésimo número contando do fim da linha, a partir de 1)
 function ftLinhasDeTexto(texto, idxQtd) {
-  const out = [];
+  const out = []; let ultimaItem = false;
   for (const raw of String(texto).split(/\r?\n/)) {
-    const l = raw.replace(/[\t|]/g, ' ').replace(/\s+/g, ' ').trim(); if (!l) continue;
+    const l = raw.replace(/[\t|]/g, ' ').replace(/\s+/g, ' ').trim(); if (!l) { ultimaItem = false; continue; }
     const tk = l.split(' ');
     let iE = tk.findIndex(t => /^\d{8,14}$/.test(t) && ftGtinOk(t));
     if (iE < 0) iE = tk.findIndex(t => /^\d{12,14}$/.test(t));
-    if (iE < 0) continue;
-    const ean = tk[iE], nums = [], pal = [];
-    tk.forEach((t, i) => {
-      if (i === iE) return;
-      if (/^\d{7,}$/.test(t)) return;                       // outros códigos (ex.: código do fornecedor)
-      const n = /^[-–—~=_]?\d{1,6}([.,]\d+)?$/.test(t) ? ftNumero(t) : null;
-      if (n !== null) nums.push(n); else if (/[A-Za-zÀ-ÿ]/.test(t) && !/^[\d.,%]+[A-Za-z]?$/.test(t) || /^[A-Za-zÀ-ÿ]/.test(t)) pal.push(t);
-    });
+    if (iE < 0) {   // continuação da descrição na linha seguinte
+      if (ultimaItem && out.length && l.length < 45 && !tk.some(t => /^\d+,\d+$/.test(t)) && !/total|factura|fatura|exento|p[aá]g|cantidad|descri/i.test(l)) out[out.length - 1].desc += ' ' + l;
+      else ultimaItem = false;
+      continue;
+    }
+    const ean = tk[iE], resto = tk.filter((t, i) => i !== iE && !/^\d{7,}$/.test(t || ''));
+    // números: a sequência final da linha, a começar no primeiro com vírgula decimal (números soltos na descrição, como "820", ficam de fora)
+    let k = resto.length; while (k > 0 && /^[-–—~=_]?\d{1,7}([.,]\d+)?$/.test(resto[k - 1])) k--;
+    let seq = resto.slice(k); const c0 = seq.findIndex(t => /,/.test(t)); if (c0 > 0) { k += c0; seq = seq.slice(c0); }
+    const nums = seq.map(ftNumero), pal = resto.slice(0, k);
     const q = nums[idxQtd == null ? 0 : idxQtd];
     out.push({ ean, desc: pal.join(' ').replace(/\s+/g, ' ').trim(), qf: q == null ? 0 : q, semQtd: q == null });
+    ultimaItem = true;
   }
   return out;
 }
@@ -255,11 +290,12 @@ function ftMontar() {
     '<div id="ft-novo" class="card" hidden><div class="big">Nova fatura</div>' +
     '<label>Nome (ex: Riosfarias 53692)</label><input type="text" id="ftn-nome" autocomplete="off">' +
     '<label>Armazém de destino</label><select id="ftn-arm"><option value="">— escolher armazém —</option>' + opArm + '</select>' +
-    '<label>Ficheiro da fatura (Excel .xls / .xlsx ou CSV)</label><input type="file" id="ftn-file" accept=".xls,.xlsx,.csv,.txt" style="margin:6px 0;width:100%">' +
+    '<label>Ficheiro da fatura (PDF com texto, Excel ou CSV)</label><input type="file" id="ftn-file" accept=".xls,.xlsx,.csv,.txt,.pdf" style="margin:6px 0;width:100%">' +
+    '<label id="ftn-grl" hidden>Este PDF tem mais do que uma fatura. Qual?</label><select id="ftn-grp" hidden></select>' +
     '<details style="margin-top:8px"><summary class="muted">Ou colar o texto da fatura (PDF ou foto)</summary>' +
     '<p class="muted">Para uma foto ou um PDF digitalizado: abre a imagem no telemóvel, seleciona e copia o texto (Google Lens no Android, Texto em Direto no iPhone) e cola aqui. Cada artigo tem de ficar numa linha, com o código de barras.</p>' +
     '<textarea id="ftn-txt" rows="8" style="width:100%;font-size:14px;border:1px solid #bbb;border-radius:8px;padding:8px"></textarea>' +
-    '<label>Qual dos números da linha é a quantidade?</label><select id="ftn-q"><option value="0">1.º número</option><option value="1">2.º número</option><option value="2">3.º número</option><option value="3">4.º número</option><option value="4">5.º número</option></select>' +
+    '<label>Onde está a quantidade na linha?</label><select id="ftn-q"><option value="auto">Automático</option><option value="i0">1.º número depois do código</option><option value="i1">2.º número depois do código</option><option value="i2">3.º número depois do código</option><option value="f1">Último número da linha</option><option value="f2">Penúltimo número</option><option value="f3">3.º número a contar do fim</option><option value="f4">4.º número a contar do fim</option><option value="f5">5.º número a contar do fim</option></select>' +
     '<button class="sec" id="ftn-ler" style="width:100%">Ler o texto</button></details>' +
     '<div id="ftn-prev"></div>' +
     '<div class="row"><button class="pri" id="ftn-ok" disabled>Criar fatura</button><button class="sec" id="ftn-x">Cancelar</button></div></div>' +
@@ -285,6 +321,7 @@ function ftMontar() {
   $('#ft-new').addEventListener('click', ftNovoAbrir);
   $('#ft-del').addEventListener('click', ftApagar);
   $('#ftn-file').addEventListener('change', ftNovoFicheiro);
+  $('#ftn-grp').addEventListener('change', ftPdfMostrar);
   $('#ftn-ler').addEventListener('click', ftNovoTexto);
   $('#ftn-q').addEventListener('change', ftNovoTexto);
   $('#ftn-ok').addEventListener('click', ftNovoCriar);
@@ -314,31 +351,51 @@ async function ftAbrirSeparador() {
 
 /* ---------- nova fatura ---------- */
 function ftNovoAbrir() {
-  ftNovo = null; $('#ftn-nome').value = ''; $('#ftn-arm').value = ''; $('#ftn-file').value = ''; $('#ftn-txt').value = ''; $('#ftn-prev').innerHTML = ''; $('#ftn-ok').disabled = true;
+  ftNovo = null; $('#ftn-nome').value = ''; $('#ftn-nome').dataset.base = ''; $('#ftn-arm').value = ''; $('#ftn-file').value = ''; $('#ftn-txt').value = ''; $('#ftn-prev').innerHTML = ''; $('#ftn-ok').disabled = true;
   $('#ft-novo').hidden = false; $('#ftn-nome').focus(); window.scrollTo(0, 0);
 }
 async function ftNovoFicheiro(e) {
   const f = e.target.files[0]; if (!f) return;
   try {
     const r = await ftLerFicheiro(f);
+    if (r.tipo === 'pdf') {
+      if (!r.texto) { $('#ftn-prev').innerHTML = '<div class="bad">Este PDF é uma imagem (digitalizado) e não tem texto. Abre-o no telemóvel, copia o texto e cola-o em "Ou colar o texto da fatura".</div>'; ftNovo = null; $('#ftn-ok').disabled = true; return; }
+      ftGrp = r.grupos; const sel = $('#ftn-grp');
+      sel.innerHTML = r.grupos.map((g, i) => '<option value="' + i + '">Fatura ' + esc(g.id || '(única)') + '</option>').join('') + (r.grupos.length > 1 ? '<option value="todas">Todas juntas</option>' : '');
+      sel.hidden = r.grupos.length < 2; $('#ftn-grl').hidden = sel.hidden;
+      if (!$('#ftn-nome').value.trim()) $('#ftn-nome').value = f.name.replace(/\.[^.]+$/, '');
+      ftPdfMostrar(); return;
+    }
     let linhas = ftLinhasDeTabela(r.rows);
-    if (!linhas.length && r.texto) linhas = ftLinhasDeTexto(r.texto, 0);
+    if (!linhas.length && r.texto) linhas = ftLinhasDeTexto(r.texto, 'auto');
     if (!$('#ftn-nome').value.trim()) $('#ftn-nome').value = f.name.replace(/\.[^.]+$/, '');
     ftNovoMostrar(linhas, f.name);
   } catch (err) { $('#ftn-prev').innerHTML = '<div class="bad">Não consegui ler o ficheiro: ' + esc(err.message) + '</div>'; ftNovo = null; $('#ftn-ok').disabled = true; }
 }
+let ftGrp = [];
+function ftPdfMostrar() {
+  const v = $('#ftn-grp').value, g = v === 'todas' ? { id: '', texto: ftGrp.map(x => x.texto).join('\n') } : ftGrp[+v || 0];
+  { const n = $('#ftn-nome'); if (!n.dataset.base) n.dataset.base = n.value.trim(); if (g.id && v !== 'todas') n.value = (n.dataset.base ? n.dataset.base + ' ' : '') + g.id; else if (v === 'todas') n.value = n.dataset.base; }
+  const idx = /T\.?\s*CANTIDAD/i.test(g.texto) ? 2 : 0;
+  ftNovoMostrar(ftLinhasDeTexto(g.texto, idx), 'PDF' + (g.id && v !== 'todas' ? ' · fatura ' + g.id : ''));
+}
 function ftNovoTexto() {
   const t = $('#ftn-txt').value; if (!t.trim()) return;
-  ftNovoMostrar(ftLinhasDeTexto(t, parseInt($('#ftn-q').value, 10)), 'texto colado');
+  ftNovoMostrar(ftLinhasDeTexto(t, $('#ftn-q').value), 'texto colado');
 }
 function ftNovoMostrar(linhas, origem) {
-  ftNovo = linhas.map(l => ({ id: ftNid(), ean: l.ean, desc: l.desc, qf: l.qf, qr: null, extra: false }));
+  ftNovo = []; let juntas = 0;
+  linhas.forEach(l => {
+    const ja = ftCodigoOk(l.ean) ? ftNovo.find(x => x.ean === l.ean) : null;
+    if (ja) { ja.qf = Math.round((ja.qf + l.qf) * 1000) / 1000; juntas++; }
+    else ftNovo.push({ id: ftNid(), ean: l.ean, desc: l.desc, qf: l.qf, qr: null, extra: false });
+  });
   const inval = ftNovo.filter(l => !ftCodigoOk(l.ean)), novos = ftNovo.filter(l => ftCodigoOk(l.ean) && !lookup(l.ean));
   const amostra = ftNovo.slice(0, 6).map(l => '<div class="item"><div class="t"><b>' + esc(l.desc || '(sem descrição)') + '</b><span class="muted">' + esc(l.ean) + (ftCodigoOk(l.ean) ? '' : ' · ⚠ código inválido') + '</span></div><div class="q">' + esc(ftQ(l.qf)) + '</div></div>').join('');
   $('#ftn-prev').innerHTML = '<div class="card"><b>' + ftNovo.length + ' linhas lidas</b> de ' + esc(origem) +
     (inval.length ? '<div class="bad">⚠ ' + inval.length + ' com código de barras inválido ou que não é código de barras (ex.: código do fornecedor). Essas linhas ficam de fora do .plt até as corrigires.</div>' : '') +
     (novos.length ? '<div class="warn">🆕 ' + novos.length + ' artigos que ainda não estão na tua lista (vão aparecer com a descrição da fatura).</div>' : '') +
-    (linhas.some(l => l.semQtd) ? '<div class="warn">Há linhas sem quantidade reconhecida.</div>' : '') + '</div>' + amostra +
+    (juntas ? '<div class="muted">' + juntas + ' linhas repetidas foram somadas (mesmo código de barras).</div>' : '') + (linhas.some(l => l.semQtd) ? '<div class="warn">Há linhas sem quantidade reconhecida.</div>' : '') + '</div>' + amostra +
     (ftNovo.length > 6 ? '<div class="muted" style="margin:6px 0">… e mais ' + (ftNovo.length - 6) + ' linhas.</div>' : '');
   $('#ftn-ok').disabled = !ftNovo.length;
   if (!ftNovo.length) $('#ftn-prev').innerHTML = '<div class="bad">Não encontrei linhas com código de barras. Confirma que a fatura tem o código de barras de cada artigo.</div>';
