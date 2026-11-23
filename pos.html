@@ -236,6 +236,8 @@ function construirArtigos(rows) {
   const cStk = [];   // colunas opcionais "Stock Arm 1", "Stock Arm 3"…: stock por armazém à data do ficheiro
   h.forEach((x, i) => { if (/^stock\b/.test(x)) { const nm = String(rows[0][i]).replace(/^\s*stock\s*/i, '').trim(), m = nm.match(/(\d+)\s*$/); cStk.push([i, m ? 'Arm. ' + m[1] : (nm || 'Stock')]); } });
   const cTx = find(x => x.includes('taxas'), -1);   // coluna opcional: taxas associadas no ERP (ex.: VALOR DEPOSITO:1.000|01:1.000)
+  const cQE = find(x => x.includes('embalagem'), -1);   // coluna opcional: quantidade que este código de barras (caixa/embalagem) obriga
+  const cPL = find(x => x.startsWith('preco') && x.includes('linha'), -1);   // coluna opcional: preço por unidade da linha de preço desse código
   const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
   for (let i = 1; i < rows.length; i++) {
@@ -245,13 +247,14 @@ function construirArtigos(rows) {
     const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
     if (!desc && !bar && !cod) continue;
     const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
+    const qe = cQE >= 0 ? numPT(r[cQE]) : 0, pl = cPL >= 0 ? String(r[cPL] || '').trim() : '';
     let rg = null;
     if (cBal >= 0) { const p = String(r[cBal] || '').trim().split(':'); if (p.length === 4 && p[0] && (p[1] === 'peso' || p[1] === 'preco_total') && /^\d+$/.test(p[0]) && +p[2] >= 0 && +p[3] >= 0) rg = { pre: p[0], tipo: p[1] === 'peso' ? 'peso' : 'preco', ni: +p[2], nd: +p[3] }; }
     let stk = null;
     if (cStk.length) { stk = cStk.map(([i, l]) => ({ l, q: numS(r[i]) })).filter(s => s.q !== null); if (!stk.length) stk = null; }
     let tx = null;
     if (cTx >= 0 && r[cTx]) { tx = String(r[cTx]).split('|').map(x => { const i = x.lastIndexOf(':'); return i > 0 ? { cod: x.slice(0, i).trim(), f: parseFloat(x.slice(i + 1)) || 0 } : null; }).filter(x => x && x.cod && x.f > 0); if (!tx.length) tx = null; }
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, tx, stk, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, qe, pl: numPT(pl) > 0 ? pl : '', rg, tx, stk, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
@@ -282,7 +285,16 @@ const fmtStk = n => (Math.round(n * 1000) / 1000).toLocaleString('pt-PT', { maxi
 const stockTexto = a => a && a.stk ? a.stk.map(s => s.l + ': ' + fmtStk(s.q)).join(' · ') : '';
 // fator de uma taxa associada ao artigo no ERP (0 se não tiver)
 function fatorTx(a, cod) { const t = a && a.tx ? a.tx.find(x => x.cod === cod) : null; return t ? t.f : 0; }
+// código de embalagem (caixa, pack…): lido pelo código de barras exato, traz a quantidade e, por vezes, outro preço por unidade
+function emb(a, t) {
+  if (!a || !a.bar || !t || !(a.qe > 0 || a.pl)) return null;
+  if (!(a.bar === t || strip0(a.bar) === strip0(t))) return null;
+  const q = a.qe > 0 ? a.qe : 1, pu = a.pl ? numPT(a.pl) : numPT(a.preco);
+  if (q === 1 && !a.pl) return null;
+  return { q, pu, normal: numPT(a.preco), total: Math.round(q * pu * 100) / 100 };
+}
 function numPT(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return 0; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) || n < 0 ? 0 : n; }
+const eur3 = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) + ' €';
 const eur = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 function depTexto(a, q) { return a && a.dep > 0 ? '♻️ Depósito Volta: ' + eur(a.dep) + ' por unidade' + (q > 0 ? ' · ' + fmtQ(q) + ' un. = ' + eur(a.dep * q) : '') : ''; }
 function fmtPreco(p) {
@@ -443,8 +455,8 @@ function totais() {
 }
 
 /* ---- linhas ---- */
-function addArtigo(a, qtd) {
-  const cod = a.bar || a.cod, pu = numPT(a.preco);
+function addArtigo(a, qtd, puEmb) {
+  const cod = a.bar || a.cod, pu = puEmb != null ? puEmb : numPT(a.preco);
   const ex = venda.lin.find(l => l.cod === cod && !l.bal);
   if (ex) { ex.qtd = r3(ex.qtd + qtd); ex.total = r2(ex.qtd * ex.pu); return ex; }
   const vf = fatorTx(a, codTaxa);
@@ -482,7 +494,7 @@ function render() {
   $('#lin').innerHTML = venda.lin.map(l => '<tr data-id="' + l.id + '"' + (l.id === ultimaLinha ? ' class="flash"' : '') + '>' +
     '<td><div class="desc">' + esc(l.desc) + '</div><div class="cd">' + esc(l.cod) + (l.bal === 'peso' ? ' · ⚖️ ao peso' : l.bal === 'preco' ? ' · 🏷️ ao preço' : '') + (l.stk ? '<br><small>Stock: ' + esc(l.stk) + '</small>' : '') + '</div></td>' +
     '<td class="num"><input type="text" data-f="qtd" inputmode="decimal" value="' + fmtQ(l.qtd) + '"></td>' +
-    '<td class="num"><input type="text" data-f="pu" inputmode="decimal" value="' + r2(l.pu).toFixed(2).replace('.', ',') + '"></td>' +
+    '<td class="num"><input type="text" data-f="pu" inputmode="decimal" value="' + (Math.abs(l.pu * 100 - Math.round(l.pu * 100)) > 1e-6 ? (Math.round(l.pu * 1000) / 1000).toFixed(3) : r2(l.pu).toFixed(2)).replace('.', ',') + '"></td>' +
     '<td class="num"><input type="text" data-f="total" inputmode="decimal" value="' + r2(l.total).toFixed(2).replace('.', ',') + '"></td>' +
     '<td><input type="checkbox" data-f="volta" title="Soma a taxa Volta"' + (l.volta ? ' checked' : '') + '></td>' +
     '<td><button class="red" data-del="1">✕</button></td></tr>').join('');
@@ -513,7 +525,8 @@ function processar(txt) {
   }
   const a = lookup(t) || lookup(converter(t));
   if (a) {
-    const l = addArtigo(a, 1); ultimaLinha = l.id; $('#cod').value = ''; alterou(); focoQtd(l.id);
+    const em = emb(a, t), l = em ? addArtigo(a, em.q, em.pu) : addArtigo(a, 1); ultimaLinha = l.id; $('#cod').value = ''; alterou(); focoQtd(l.id);
+    if (em) toast('Embalagem: ' + fmtQ(em.q) + ' un. × ' + eur3(em.pu) + ' = ' + eur(em.total), 3500);
     if (!numPT(a.preco)) toast('Artigo sem preço no ficheiro: escreve o preço.', 4000);
     return;
   }
@@ -531,7 +544,7 @@ $('#lin').addEventListener('change', e => {
   if (f === 'volta') { l.volta = e.target.checked; alterou(); return; }
   const v = numPT(e.target.value);
   if (f === 'qtd') { l.qtd = r3(v); l.total = r2(l.qtd * l.pu); }
-  else if (f === 'pu') { l.pu = r2(v); if (l.bal === 'preco' && l.pu > 0) l.qtd = r3(l.total / l.pu); else l.total = r2(l.qtd * l.pu); }
+  else if (f === 'pu') { l.pu = r3(v); if (l.bal === 'preco' && l.pu > 0) l.qtd = r3(l.total / l.pu); else l.total = r2(l.qtd * l.pu); }
   else if (f === 'total') { l.total = r2(v); if (l.bal && l.pu > 0) l.qtd = r3(l.total / l.pu); else if (l.qtd > 0) l.pu = r2(l.total / l.qtd); }
   alterou();
 });

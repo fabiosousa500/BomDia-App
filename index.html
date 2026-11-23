@@ -266,6 +266,8 @@ function construirArtigos(rows) {
   const cStk = [];   // colunas opcionais "Stock Arm 1", "Stock Arm 3"…: stock por armazém à data do ficheiro
   h.forEach((x, i) => { if (/^stock\b/.test(x)) { const nm = String(rows[0][i]).replace(/^\s*stock\s*/i, '').trim(), m = nm.match(/(\d+)\s*$/); cStk.push([i, m ? 'Arm. ' + m[1] : (nm || 'Stock')]); } });
   const cTx = find(x => x.includes('taxas'), -1);   // coluna opcional: taxas associadas no ERP (ex.: VALOR DEPOSITO:1.000|01:1.000)
+  const cQE = find(x => x.includes('embalagem'), -1);   // coluna opcional: quantidade que este código de barras (caixa/embalagem) obriga
+  const cPL = find(x => x.startsWith('preco') && x.includes('linha'), -1);   // coluna opcional: preço por unidade da linha de preço desse código
   const cDep = find(x => x.includes('deposito') || x.includes('volta') || x.includes('sdr'), -1);   // coluna opcional: valor do depósito por unidade
   const out = [];
   for (let i = 1; i < rows.length; i++) {
@@ -275,13 +277,14 @@ function construirArtigos(rows) {
     const bar = (r[cBar] || '').trim(), cod = (r[cCod] || '').trim();
     if (!desc && !bar && !cod) continue;
     const dep = cDep >= 0 ? numPT(r[cDep]) : 0;
+    const qe = cQE >= 0 ? numPT(r[cQE]) : 0, pl = cPL >= 0 ? String(r[cPL] || '').trim() : '';
     let rg = null;
     if (cBal >= 0) { const p = String(r[cBal] || '').trim().split(':'); if (p.length === 4 && p[0] && (p[1] === 'peso' || p[1] === 'preco_total') && /^\d+$/.test(p[0]) && +p[2] >= 0 && +p[3] >= 0) rg = { pre: p[0], tipo: p[1] === 'peso' ? 'peso' : 'preco', ni: +p[2], nd: +p[3] }; }
     let stk = null;
     if (cStk.length) { stk = cStk.map(([i, l]) => ({ l, q: numS(r[i]) })).filter(s => s.q !== null); if (!stk.length) stk = null; }
     let tx = null;
     if (cTx >= 0 && r[cTx]) { tx = String(r[cTx]).split('|').map(x => { const i = x.lastIndexOf(':'); return i > 0 ? { cod: x.slice(0, i).trim(), f: parseFloat(x.slice(i + 1)) || 0 } : null; }).filter(x => x && x.cod && x.f > 0); if (!tx.length) tx = null; }
-    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, rg, tx, stk, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
+    out.push({ bar, cod, desc, preco: (r[cPre] || '').trim(), dep, qe, pl: numPT(pl) > 0 ? pl : '', rg, tx, stk, n: norm(desc), b: bar.toLowerCase(), c: cod.toLowerCase() });
   }
   return out;
 }
@@ -312,7 +315,16 @@ const fmtStk = n => (Math.round(n * 1000) / 1000).toLocaleString('pt-PT', { maxi
 const stockTexto = a => a && a.stk ? a.stk.map(s => s.l + ': ' + fmtStk(s.q)).join(' · ') : '';
 // fator de uma taxa associada ao artigo no ERP (0 se não tiver)
 function fatorTx(a, cod) { const t = a && a.tx ? a.tx.find(x => x.cod === cod) : null; return t ? t.f : 0; }
+// código de embalagem (caixa, pack…): lido pelo código de barras exato, traz a quantidade e, por vezes, outro preço por unidade
+function emb(a, t) {
+  if (!a || !a.bar || !t || !(a.qe > 0 || a.pl)) return null;
+  if (!(a.bar === t || strip0(a.bar) === strip0(t))) return null;
+  const q = a.qe > 0 ? a.qe : 1, pu = a.pl ? numPT(a.pl) : numPT(a.preco);
+  if (q === 1 && !a.pl) return null;
+  return { q, pu, normal: numPT(a.preco), total: Math.round(q * pu * 100) / 100 };
+}
 function numPT(v) { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return 0; if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isNaN(n) || n < 0 ? 0 : n; }
+const eur3 = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) + ' €';
 const eur = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 function depTexto(a, q) { return a && a.dep > 0 ? '♻️ Depósito Volta: ' + eur(a.dep) + ' por unidade' + (q > 0 ? ' · ' + fmtQ(q) + ' un. = ' + eur(a.dep * q) : '') : ''; }
 function fmtPreco(p) {
@@ -410,11 +422,15 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v19', VERSAO_DATA = '22/11/2026 12:00';
+const VERSAO = 'v20', VERSAO_DATA = '23/11/2026 22:00';
 // Novidades de cada versão em relação à anterior (a mais recente primeiro). Acrescenta aqui a cada versão nova.
 const NOVIDADES = [
-  { v: 'v19', data: '22/11/2026 12:00', itens: [
+  { v: 'v20', data: '23/11/2026 22:00', itens: [
+    'Códigos de embalagem (caixas, packs): se o ficheiro de artigos tiver as colunas “Qtd embalagem” e “Preço linha”, ao ler o código da embalagem a app mostra a quantidade e o preço por unidade dessa linha de preço (ex.: 10 × 0,314 € = 3,14 €), e o POS acrescenta logo essa quantidade ao preço certo.' ] },
+  { v: 'v19', data: '23/11/2026 22:00', itens: [
     'Novo separador Faturas: carrega a fatura do fornecedor (PDF com texto, Excel .xls/.xlsx, CSV ou texto colado; num PDF com várias faturas escolhes qual), escolhe o armazém de destino, pica os artigos confirmando a quantidade recebida e gera o .plt. Também dá para gerar o .plt logo, sem picar.',
+    'Faturas: o mesmo artigo em duas linhas da fatura fica em duas linhas (no ecrã e no .plt), e cada picagem preenche a próxima linha por picar. Um código que não está na fatura nem na tua lista pode ser associado à linha certa ou acrescentado com descrição.',
+    'Faturas: se picas um artigo que não consta da fatura (por exemplo, o fornecedor errou o código de barras), podes associá-lo à linha certa da fatura; o .plt leva o teu código e o relatório mostra a correção.',
     'Linhas não picadas contam como recebido 0; no fim há um relatório de artigos em falta, a menos e a mais. Artigos novos aparecem com a descrição da fatura.',
     'Guias/Inventário: o armazém passa a ser uma escolha entre 1 · Bom Dia Vales e 3 · Bom Dia Cais.' ] },
   { v: 'v18', data: '21/11/2026 16:45', itens: [
@@ -566,9 +582,11 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('button')
 
 /* ---------- PREÇOS ---------- */
 function mostrarCartao(a, codigo, bal) {
+  const em = emb(a, codigo);
   $('#pc-res').innerHTML = '';
   const eb = bal ? '<div class="warn">' + textoBalanca(bal, qtdBalanca(bal, a)) + (qtdBalanca(bal, a).semPreco ? '<br>Sem preço por kg no ficheiro.' : '') + '</div>' : '';
   $('#pc-card').innerHTML = '<div class="card"><div class="big">' + esc(a.desc) + '</div><div class="preco">' + esc(fmtPreco(a.preco)) + (bal ? '<span class="muted" style="font-size:16px"> /kg</span>' : '') + '</div>' + eb +
+    (em ? '<div class="warn">📦 Código de embalagem: <b>' + esc(fmtQ(em.q)) + ' un.</b> × ' + esc(eur3(em.pu)) + ' = <b>' + esc(eur(em.total)) + '</b>' + (em.pu !== em.normal ? '<br><span class="muted">Preço normal da unidade: ' + esc(eur(em.normal)) + '</span>' : '') + '</div>' : '') +
     '<div class="muted">Cód. artigo: ' + esc(a.cod || '-') + '<br>Cód. barras: ' + esc(a.bar || '-') + '</div>' +
     (stockTexto(a) ? '<div class="muted" style="font-size:12px;margin-top:6px">Stock (à data da lista) — ' + esc(stockTexto(a)) + '</div>' : '') + '</div>';
 }
@@ -579,7 +597,7 @@ function pcBuscar(txt) {
   const bal = parseBalanca(t);
   if (bal) { const ab = bal.ab || lookup(bal.art); if (ab) return mostrarCartao(ab, null, bal); $('#pc-res').innerHTML = '<div class="bad">Etiqueta de balança: artigo ' + esc(bal.art) + ' não encontrado</div>'; return; }
   let a = lookup(t) || lookup(converter(t));
-  if (a) return mostrarCartao(a);
+  if (a) return mostrarCartao(a, t);
   const res = pesquisarNome(t, $('#pc-modo').value, 100);
   if (!res.length) { if (t.length >= 2) $('#pc-res').innerHTML = '<div class="bad">Não encontrado: ' + esc(t) + '</div>'; return; }
   $('#pc-res').innerHTML = '<div class="muted" style="margin:6px 0">' + res.length + (res.length >= 100 ? '+' : '') + ' resultado(s)</div>' +

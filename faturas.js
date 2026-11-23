@@ -312,6 +312,10 @@ function ftMontar() {
     '<div class="row" style="margin:8px 0"><div><label>Faturado</label><div id="ftp-qf" class="big"></div></div><div><label>Recebido</label><input type="text" id="ftp-qr" inputmode="decimal" autocomplete="off"></div></div>' +
     '<div class="row"><button class="pri" id="ftp-ok">✔ Confirmar</button><button class="sec" id="ftp-0">0 · não veio</button></div>' +
     '<div class="row"><button class="sec" id="ftp-ed">✏️ Corrigir código</button><button class="sec" id="ftp-x">Cancelar</button></div></div>' +
+    '<div id="ftv-assoc" class="card" hidden style="border:2px solid var(--er)"><div id="fta-msg" style="font-weight:bold"></div>' +
+    '<div class="muted" style="margin:6px 0">Se é um artigo da fatura com o código de barras errado, toca na linha certa. Assim fica tudo na mesma linha e o .plt leva o teu código.</div>' +
+    '<input type="search" id="fta-in" placeholder="Procurar na fatura (nome)" autocomplete="off"><div id="fta-lista" style="max-height:260px;overflow:auto"></div>' +
+    '<div class="row"><button class="sec" id="fta-extra">➕ Não está na fatura (linha a mais)</button><button class="sec" id="fta-x">Cancelar</button></div></div>' +
     '<div class="row" style="margin-top:8px"><button class="sec" id="ftv-plt0">⚡ PLT sem picar</button><button class="sec" id="ftv-rel">📊 Terminar e ver relatório</button></div></div>' +
     '<div id="ftv-relat"></div>' +
     '<label>Mostrar</label><select id="ftv-filtro"><option value="todas">Todas as linhas</option><option value="porpicar">Por picar</option><option value="dif">Com diferenças</option><option value="novos">Artigos novos</option></select>' +
@@ -331,6 +335,10 @@ function ftMontar() {
   $('#ftv-in').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const t = limpar(e.target.value); if (t) { ftPicado(t, true); e.target.value = ''; } } });
   $('#ftv-filtro').addEventListener('change', ftRender);
   $('#ftv-lista').addEventListener('click', e => { const it = e.target.closest('.item'); const f = ftAtual(); if (!it || !f) return; const l = f.linhas.find(x => x.id === it.dataset.id); if (l) ftPainel(l); });
+  $('#fta-in').addEventListener('input', ftAssocLista);
+  $('#fta-lista').addEventListener('click', e => { const it = e.target.closest('.item'); if (it) ftAssocEscolher(it.dataset.id); });
+  $('#fta-extra').addEventListener('click', ftAssocExtra);
+  $('#fta-x').addEventListener('click', ftAssocFechar);
   $('#ftp-ok').addEventListener('click', () => ftConfirmar(false));
   $('#ftp-0').addEventListener('click', () => ftConfirmar(true));
   $('#ftp-x').addEventListener('click', () => { ftCur = null; $('#ftv-painel').hidden = true; });
@@ -384,18 +392,14 @@ function ftNovoTexto() {
   ftNovoMostrar(ftLinhasDeTexto(t, $('#ftn-q').value), 'texto colado');
 }
 function ftNovoMostrar(linhas, origem) {
-  ftNovo = []; let juntas = 0;
-  linhas.forEach(l => {
-    const ja = ftCodigoOk(l.ean) ? ftNovo.find(x => x.ean === l.ean) : null;
-    if (ja) { ja.qf = Math.round((ja.qf + l.qf) * 1000) / 1000; juntas++; }
-    else ftNovo.push({ id: ftNid(), ean: l.ean, desc: l.desc, qf: l.qf, qr: null, extra: false });
-  });
+  ftNovo = linhas.map(l => ({ id: ftNid(), ean: l.ean, desc: l.desc, qf: l.qf, qr: null, extra: false }));
+  const rep = new Set(); ftNovo.forEach((l, i) => { if (ftCodigoOk(l.ean) && ftNovo.findIndex(x => x.ean === l.ean) !== i) rep.add(l.ean); });
   const inval = ftNovo.filter(l => !ftCodigoOk(l.ean)), novos = ftNovo.filter(l => ftCodigoOk(l.ean) && !lookup(l.ean));
   const amostra = ftNovo.slice(0, 6).map(l => '<div class="item"><div class="t"><b>' + esc(l.desc || '(sem descrição)') + '</b><span class="muted">' + esc(l.ean) + (ftCodigoOk(l.ean) ? '' : ' · ⚠ código inválido') + '</span></div><div class="q">' + esc(ftQ(l.qf)) + '</div></div>').join('');
   $('#ftn-prev').innerHTML = '<div class="card"><b>' + ftNovo.length + ' linhas lidas</b> de ' + esc(origem) +
     (inval.length ? '<div class="bad">⚠ ' + inval.length + ' com código de barras inválido ou que não é código de barras (ex.: código do fornecedor). Essas linhas ficam de fora do .plt até as corrigires.</div>' : '') +
     (novos.length ? '<div class="warn">🆕 ' + novos.length + ' artigos que ainda não estão na tua lista (vão aparecer com a descrição da fatura).</div>' : '') +
-    (juntas ? '<div class="muted">' + juntas + ' linhas repetidas foram somadas (mesmo código de barras).</div>' : '') + (linhas.some(l => l.semQtd) ? '<div class="warn">Há linhas sem quantidade reconhecida.</div>' : '') + '</div>' + amostra +
+    (rep.size ? '<div class="muted">' + rep.size + ' artigos aparecem em mais do que uma linha da fatura; ficam em linhas separadas e picas cada uma.</div>' : '') + (linhas.some(l => l.semQtd) ? '<div class="warn">Há linhas sem quantidade reconhecida.</div>' : '') + '</div>' + amostra +
     (ftNovo.length > 6 ? '<div class="muted" style="margin:6px 0">… e mais ' + (ftNovo.length - 6) + ' linhas.</div>' : '');
   $('#ftn-ok').disabled = !ftNovo.length;
   if (!ftNovo.length) $('#ftn-prev').innerHTML = '<div class="bad">Não encontrei linhas com código de barras. Confirma que a fatura tem o código de barras de cada artigo.</div>';
@@ -437,7 +441,7 @@ function ftRender() {
   const ls = f.linhas.filter(l => fil === 'todas' || (fil === 'porpicar' && ftEstado(l) === 'por') || (fil === 'dif' && ftEstado(l) === 'dif') || (fil === 'novos' && ftCodigoOk(l.ean) && !lookup(l.ean)));
   $('#ftv-lista').innerHTML = ls.map(l => {
     const e = ftEstado(l), a = ftCodigoOk(l.ean) ? lookup(l.ean) : null;
-    const marca = (!ftCodigoOk(l.ean) ? ' · ⚠ código inválido' : (!a ? ' · 🆕 novo' : '')) + (l.extra ? ' · fora da fatura' : '');
+    const marca = (!ftCodigoOk(l.ean) ? ' · ⚠ código inválido' : (!a ? ' · 🆕 novo' : '')) + (l.extra ? ' · fora da fatura' : '') + (l.corr ? ' · código corrigido' : '');
     const cor = e === 'ok' ? 'var(--ok)' : e === 'dif' ? 'var(--er)' : '#888';
     return '<div class="item click" data-id="' + esc(l.id) + '"><div class="t"><b>' + esc(l.desc || (a ? a.desc : '(sem descrição)')) + '</b><span class="muted">' + esc(l.ean) + marca + '</span></div>' +
       '<div class="q" style="color:' + cor + ';font-size:16px">Fat. ' + esc(ftQ(l.qf)) + '<br>Rec. ' + (e === 'por' ? '—' : esc(ftQ(l.qr))) + '</div></div>';
@@ -453,16 +457,44 @@ function ftCandidatos(raw) {
 }
 function ftAcha(f, raw) {
   const cand = ftCandidatos(raw), cs = new Set(cand.map(x => x.replace(/^0+/, '')));
-  let l = f.linhas.find(x => cs.has(String(x.ean).replace(/^0+/, '')));
-  if (l) return l;
+  const iguais = f.linhas.filter(x => cs.has(String(x.ean).replace(/^0+/, '')));
+  if (iguais.length) return iguais.find(x => ftEstado(x) === 'por') || iguais[0];
+  let l;
   const arts = new Set(); cand.forEach(c => { const a = lookup(c); if (a && a.cod) arts.add(a.cod); });   // outro código de barras do mesmo artigo
-  if (arts.size) l = f.linhas.find(x => { const a = ftCodigoOk(x.ean) ? lookup(x.ean) : null; return a && arts.has(a.cod); });
+  if (arts.size) { const m = f.linhas.filter(x => { const a = ftCodigoOk(x.ean) ? lookup(x.ean) : null; return a && arts.has(a.cod); }); l = m.find(x => ftEstado(x) === 'por') || m[0]; }
   return l || null;
 }
 async function ftCamara() {
   const f = ftAtual(); if (!f) return;
   if (!f.arm) { toast('Escolhe primeiro o armazém de destino.', 3500); $('#ftv-arm').focus(); return; }
   const raw = await lerCodigo(); if (raw) ftPicado(raw, false);
+}
+let ftAssoc = null;
+function ftAssocFechar() { const m = ftAssoc && !ftAssoc.manual; ftAssoc = null; $('#ftv-assoc').hidden = true; if (m && $('#ftv-cont').checked) setTimeout(ftCamara, 300); }
+function ftAssocLista() {
+  const f = ftAtual(); if (!f || !ftAssoc) return;
+  const nt = norm($('#fta-in').value).split(/\s+/).filter(Boolean);
+  const ls = f.linhas.filter(x => !x.extra && ftEstado(x) === 'por' && nt.every(p => norm(x.desc + ' ' + x.ean).includes(p)));
+  ls.sort((x, y) => (ftCodigoOk(x.ean) && lookup(x.ean) ? 1 : 0) - (ftCodigoOk(y.ean) && lookup(y.ean) ? 1 : 0));
+  $('#fta-lista').innerHTML = ls.map(x => '<div class="item click" data-id="' + esc(x.id) + '"><div class="t"><b>' + esc(x.desc || '(sem descrição)') + '</b><span class="muted">' + esc(x.ean) + (ftCodigoOk(x.ean) && lookup(x.ean) ? '' : ' · código suspeito') + '</span></div><div class="q" style="font-size:16px">Fat. ' + esc(ftQ(x.qf)) + '</div></div>').join('') || '<div class="muted" style="padding:8px">Nenhuma linha por picar com esse nome.</div>';
+}
+async function ftAssocEscolher(id) {
+  const f = ftAtual(); if (!f || !ftAssoc) return;
+  const l = f.linhas.find(x => x.id === id); if (!l) return;
+  const raw = ftAssoc.raw, novo = ftCandidatos(raw).find(ftCodigoOk) || limpar(raw);
+  if (l.ean !== novo) { if (!l.eanFatura) l.eanFatura = l.ean; l.ean = novo; l.corr = true; }
+  await ftSalvar(); ftAssoc = null; $('#ftv-assoc').hidden = true; ftRender(); ftPainel(l, raw);
+}
+async function ftAssocExtra() {
+  const f = ftAtual(); if (!f || !ftAssoc) return;
+  const raw = ftAssoc.raw, a = lookup(converter(limpar(raw))) || lookup(limpar(raw));
+  const ean = ftCandidatos(raw).find(ftCodigoOk) || limpar(raw);
+  let l = f.linhas.find(x => x.extra && x.ean === ean), desc = a ? a.desc : '';
+  if (!l) {
+    if (!a) { const d = await dlg('Este código não está na tua lista nem na fatura (' + ean + ').\nEscreve a descrição do artigo (para o relatório):', ''); if (d === null) return; desc = d.trim(); }
+    l = { id: ftNid(), ean, desc, qf: 0, qr: null, extra: true }; f.linhas.push(l);
+  }
+  await ftSalvar(); ftAssoc = null; $('#ftv-assoc').hidden = true; ftRender(); ftPainel(l, raw);
 }
 async function ftPicado(raw, manual) {
   const f = ftAtual(); if (!f) return;
@@ -479,12 +511,12 @@ async function ftPicado(raw, manual) {
     }
   }
   if (!l) {
+    ftAssoc = { raw, manual };
     const a = lookup(converter(limpar(raw))) || lookup(limpar(raw));
-    const quem = a ? a.desc : 'artigo não identificado';
-    if (!await dlg('Este código não consta da fatura:\n' + limpar(raw) + '\n(' + quem + ')\n\nAdicionar como linha a mais (fora da fatura)?')) { if ($('#ftv-cont').checked && !manual) setTimeout(ftCamara, 300); return; }
-    const ean = ftCandidatos(raw).find(ftCodigoOk) || limpar(raw);
-    l = { id: ftNid(), ean, desc: a ? a.desc : '', qf: 0, qr: null, extra: true };
-    f.linhas.push(l); await ftSalvar();
+    $('#fta-msg').textContent = 'Este código não consta da fatura: ' + limpar(raw) + (a ? ' · ' + a.desc : ' · (artigo não identificado)');
+    $('#fta-in').value = a ? '' : ''; ftAssocLista();
+    $('#ftv-painel').hidden = true; $('#ftv-assoc').hidden = false; $('#ftv-assoc').scrollIntoView({ block: 'nearest' });
+    return;
   }
   ftPainel(l, raw);
 }
@@ -497,6 +529,7 @@ function ftPainel(l, raw) {
   const av = [];
   if (!ftCodigoOk(l.ean)) av.push('⚠ Este código não é um código de barras válido. Corrige-o para entrar no .plt.');
   if (l.extra) av.push('Este artigo não consta da fatura.');
+  if (l.corr) av.push('Código corrigido: na fatura vinha ' + l.eanFatura + '.');
   if (caixa) av.push('Leste outro código do mesmo artigo (por exemplo da caixa). Confirma a quantidade em unidades.');
   $('#ftp-av').hidden = !av.length; $('#ftp-av').innerHTML = av.map(esc).join('<br>');
   $('#ftp-qf').textContent = ftQ(l.qf);
@@ -540,10 +573,11 @@ function ftRelatorioTexto(f) {
   const d = ftRelatorioDados(f), L = [];
   const sec = (tit, arr, fn) => { if (arr.length) { L.push('', tit + ' (' + arr.length + ')'); arr.forEach(x => L.push('- ' + fn(x))); } };
   L.push('Fatura: ' + f.nome, 'Armazém: ' + ftNomeArm(f.arm), 'Linhas certas: ' + d.ok.length);
-  const nm = x => (x.l.desc || '(sem descrição)') + ' [' + x.l.ean + ']';
+  const nm = x => (x.l.desc || '(sem descrição)') + ' [' + x.l.ean + ']' + (x.l.corr ? ' (código da fatura: ' + x.l.eanFatura + ')' : '');
   sec('NÃO PICADOS (contam como 0)', d.falta, x => nm(x) + ' · faturado ' + ftQ(x.l.qf));
   sec('MENOS DO QUE O FATURADO', d.menos, x => nm(x) + ' · faturado ' + ftQ(x.l.qf) + ' · recebido ' + ftQ(x.rec));
   sec('MAIS DO QUE O FATURADO', d.mais, x => nm(x) + ' · faturado ' + ftQ(x.l.qf) + ' · recebido ' + ftQ(x.rec));
+  sec('CÓDIGO DE BARRAS CORRIGIDO (erro do fornecedor)', f.linhas.filter(l => l.corr), l => (l.desc || '(sem descrição)') + ' · fatura ' + l.eanFatura + ' → ' + l.ean);
   sec('FORA DA FATURA', d.extras, x => nm(x) + ' · recebido ' + ftQ(x.rec));
   const novos = f.linhas.filter(l => ftCodigoOk(l.ean) && !lookup(l.ean));
   sec('ARTIGOS NOVOS (não estão na lista)', novos, l => (l.desc || '(sem descrição)') + ' [' + l.ean + ']');
@@ -555,7 +589,7 @@ function ftRelatorio() {
   const f = ftAtual(); if (!f) return;
   const d = ftRelatorioDados(f);
   const bloco = (tit, cor, arr, fn) => arr.length ? '<div class="card"><b style="color:' + cor + '">' + tit + ' (' + arr.length + ')</b>' + arr.map(x => '<div style="border-top:1px solid #eee;padding:6px 0">' + fn(x) + '</div>').join('') + '</div>' : '';
-  const nm = x => '<b>' + esc(x.l.desc || '(sem descrição)') + '</b><br><span class="muted">' + esc(x.l.ean) + '</span>';
+  const nm = x => '<b>' + esc(x.l.desc || '(sem descrição)') + '</b><br><span class="muted">' + esc(x.l.ean) + (x.l.corr ? ' · código corrigido (fatura: ' + esc(x.l.eanFatura) + ')' : '') + '</span>';
   $('#ftv-relat').innerHTML = '<div class="card"><div class="big">Relatório</div>' + d.ok.length + ' linhas certas de ' + f.linhas.filter(l => !l.extra).length + '</div>' +
     bloco('❌ Não picados (contam como 0)', 'var(--er)', d.falta, x => nm(x) + '<br>Faturado ' + esc(ftQ(x.l.qf))) +
     bloco('⬇️ Menos do que o faturado', 'var(--er)', d.menos, x => nm(x) + '<br>Faturado ' + esc(ftQ(x.l.qf)) + ' · recebido ' + esc(ftQ(x.rec))) +
@@ -578,16 +612,13 @@ async function ftPartilharTexto(f) {
 
 /* ---------- .plt ---------- */
 function ftConstruirPlt(f, semPicar, incluirZero) {
-  const ordem = [], soma = new Map(), invalidos = [];
-  f.linhas.forEach(l => {
+  const linhas = [], invalidos = [];
+  f.linhas.forEach(l => {   // uma linha do .plt por linha da fatura, pela mesma ordem
     if (!ftCodigoOk(l.ean)) { invalidos.push(l); return; }
-    const q = semPicar ? l.qf : (l.qr === null || l.qr === undefined ? 0 : l.qr);
-    const k = String(l.ean).trim();
-    if (!soma.has(k)) { soma.set(k, 0); ordem.push(k); }
-    soma.set(k, soma.get(k) + q);
+    const q = Math.round((semPicar ? l.qf : (l.qr === null || l.qr === undefined ? 0 : l.qr)) * 1000) / 1000;
+    if (q === 0 && !incluirZero) return;
+    linhas.push(String(l.ean).trim() + '|' + f.arm + '|||' + String(q));
   });
-  const linhas = [];
-  ordem.forEach(k => { const q = Math.round(soma.get(k) * 1000) / 1000; if (q === 0 && !incluirZero) return; linhas.push(k + '|' + f.arm + '|||' + String(q)); });
   return { texto: linhas.length ? linhas.join('\r\n') + '\r\n' : '', n: linhas.length, invalidos };
 }
 async function ftExportar(semPicar, modo) {
