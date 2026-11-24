@@ -422,9 +422,13 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v20', VERSAO_DATA = '23/11/2026 22:00';
+const VERSAO = 'v21', VERSAO_DATA = '24/11/2026 01:30';
 // Novidades de cada versão em relação à anterior (a mais recente primeiro). Acrescenta aqui a cada versão nova.
 const NOVIDADES = [
+  { v: 'v21', data: '24/11/2026 01:30', itens: [
+    'POS: a taxa Volta passa a aparecer numa linha própria logo abaixo do artigo (como a taxa do saco), em vez de um resumo no menu lateral. Marcar ou desmarcar o ♻️ acrescenta ou retira essa linha.',
+    'POS: bipar outra vez um código já bipado cria uma linha nova em vez de somar à quantidade.',
+    'POS: menu lateral mais curto (sem a parte da Volta nem os botões Exato/5/10/20/50).' ] },
   { v: 'v20', data: '23/11/2026 22:00', itens: [
     'Códigos de embalagem (caixas, packs): se o ficheiro de artigos tiver as colunas “Qtd embalagem” e “Preço linha”, ao ler o código da embalagem a app mostra a quantidade e o preço por unidade dessa linha de preço (ex.: 10 × 0,314 € = 3,14 €), e o POS acrescenta logo essa quantidade ao preço certo.' ] },
   { v: 'v19', data: '23/11/2026 22:00', itens: [

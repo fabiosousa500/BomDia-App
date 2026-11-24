@@ -81,21 +81,16 @@
     </div>
     <div class="card" style="padding:0;overflow:auto">
       <table>
-        <thead><tr><th>Artigo</th><th class="num">Qtd</th><th class="num">Preço</th><th class="num">Total</th><th title="Soma taxa Volta">♻️</th><th></th></tr></thead>
+        <thead><tr><th>Artigo</th><th class="num">Qtd</th><th class="num">Preço</th><th class="num">Total</th><th title="Artigo com taxa Volta">♻️</th><th></th></tr></thead>
         <tbody id="lin"></tbody>
       </table>
       <div id="vazio" class="muted" style="padding:20px;text-align:center">Sem artigos. Bipa um código para começar.</div>
     </div>
-    <p class="muted">Enter no código adiciona o artigo; Enter na quantidade volta ao código. O mesmo artigo bipado outra vez soma 1 à quantidade. Etiquetas de balança (27 e 29) criam uma linha nova.</p>
+    <p class="muted">Enter no código adiciona o artigo; Enter na quantidade volta ao código. Cada leitura cria uma linha nova, mesmo que o artigo já esteja na venda. A taxa Volta e outras taxas aparecem numa linha logo abaixo do artigo.</p>
   </div>
 
   <div class="card">
     <div class="linha"><span>Subtotal</span><b id="t-sub">0,00 €</b></div>
-    <div class="linha"><span>♻️ Taxa Volta <small id="t-un" class="muted"></small></span><b id="t-taxa">0,00 €</b></div>
-    <div class="row" style="align-items:end">
-      <div hidden><label>Taxa Volta por unidade (€)</label><input type="text" id="taxaval" inputmode="decimal" style="width:100%"></div>
-      <div><label>Unidades extra de taxa</label><input type="text" id="extra" inputmode="numeric" value="0" style="width:100%"></div>
-    </div>
     <div class="tot" id="t-total">0,00 €</div>
 
     <label>Pagamento</label>
@@ -103,9 +98,6 @@
     <div id="bx-din">
       <label>Valor recebido (€)</label>
       <input type="text" id="rec" inputmode="decimal" style="width:100%" autocomplete="off">
-      <div class="row" style="margin-top:6px" id="notas">
-        <button class="sec" data-v="exato">Exato</button><button class="sec" data-v="5">5</button><button class="sec" data-v="10">10</button><button class="sec" data-v="20">20</button><button class="sec" data-v="50">50</button>
-      </div>
       <div class="linha" style="margin-top:6px"><span>Troco</span></div>
       <div class="troco" id="troco">0,00 €</div>
     </div>
@@ -447,18 +439,14 @@ const isVolta = c => voltaSet.has(c);
 function novaVenda() { return { lin: [], pag: 'Dinheiro', rec: '', cartao: '', doc: 'Fatura simplificada', obs: '', extra: 0 }; }
 const guardarRascunho = () => kvSet('pos_rascunho', venda).catch(() => { });
 
-function totais() {
+function totais() {   // a taxa Volta é uma linha como as outras (ver voltaFilho), por isso o total é só a soma das linhas
   const sub = r2(venda.lin.reduce((s, l) => s + l.total, 0));
-  const un = r3(venda.lin.reduce((s, l) => s + (l.volta ? l.qtd * (l.vf || 1) : 0), 0) + (parseFloat(venda.extra) || 0));
-  const taxa = r2(un * taxaVal);
-  return { sub, un, taxa, total: r2(sub + taxa) };
+  return { sub, un: 0, taxa: 0, total: sub };
 }
 
 /* ---- linhas ---- */
 function addArtigo(a, qtd, puEmb) {
   const cod = a.bar || a.cod, pu = puEmb != null ? puEmb : numPT(a.preco);
-  const ex = venda.lin.find(l => l.cod === cod && !l.bal);
-  if (ex) { ex.qtd = r3(ex.qtd + qtd); ex.total = r2(ex.qtd * ex.pu); return ex; }
   const vf = fatorTx(a, codTaxa);
   const l = { id: novoId(), cod, desc: a.desc, qtd, pu, total: r2(qtd * pu), volta: vf > 0 || isVolta(cod), vf: vf > 0 ? vf : 1, stk: stockTexto(a), bal: null };
   venda.lin.push(l); taxasExtra(l, a); return l;
@@ -473,7 +461,16 @@ function addBalanca(b, a) {
   venda.lin.push(l); taxasExtra(l, a); return l;
 }
 // outras taxas associadas no ERP (ex.: 01 no saco): entram como linha própria, com a quantidade do artigo × fator
+function voltaFilho(pai, depois) {   // taxa Volta numa linha logo abaixo do artigo (como a taxa do saco)
+  if (!pai.volta || venda.lin.some(c => c.pai === pai.id && c.cod === codTaxa)) return;
+  const t = lookup(codTaxa), f = pai.vf || 1, q = r3(pai.qtd * f);
+  const c = { id: novoId(), cod: codTaxa, desc: t ? t.desc : 'Taxa Volta', qtd: q, pu: taxaVal, total: r2(q * taxaVal), volta: false, vf: 1, bal: null, pai: pai.id, f, pq: pai.qtd };
+  if (!depois) { venda.lin.push(c); return; }
+  let i = venda.lin.findIndex(x => x.id === pai.id); while (i + 1 < venda.lin.length && venda.lin[i + 1].pai === pai.id) i++;
+  venda.lin.splice(i + 1, 0, c);
+}
 function taxasExtra(pai, a) {
+  voltaFilho(pai, false);
   (a && a.tx || []).filter(x => x.cod !== codTaxa).forEach(x => {
     const t = lookup(x.cod), pu = (t && numPT(t.preco)) || (x.cod === '01' ? 0.10 : 0), q = r3(pai.qtd * x.f);
     venda.lin.push({ id: novoId(), cod: x.cod, desc: t ? t.desc : 'Taxa ' + x.cod, qtd: q, pu, total: r2(q * pu), volta: false, vf: 1, bal: null, pai: pai.id, f: x.f, pq: pai.qtd });
@@ -491,17 +488,15 @@ function sincTaxas() {
 let ultimaLinha = null;
 function render() {
   const T = totais();
-  $('#lin').innerHTML = venda.lin.map(l => '<tr data-id="' + l.id + '"' + (l.id === ultimaLinha ? ' class="flash"' : '') + '>' +
-    '<td><div class="desc">' + esc(l.desc) + '</div><div class="cd">' + esc(l.cod) + (l.bal === 'peso' ? ' · ⚖️ ao peso' : l.bal === 'preco' ? ' · 🏷️ ao preço' : '') + (l.stk ? '<br><small>Stock: ' + esc(l.stk) + '</small>' : '') + '</div></td>' +
+  $('#lin').innerHTML = venda.lin.map(l => '<tr data-id="' + l.id + '"' + (l.id === ultimaLinha ? ' class="flash"' : '') + (l.pai ? ' style="background:#f6f7fa"' : '') + '>' +
+    '<td' + (l.pai ? ' style="padding-left:26px"' : '') + '><div class="desc"' + (l.pai ? ' style="font-weight:600"' : '') + '>' + (l.pai ? '↳ ' : '') + esc(l.desc) + '</div><div class="cd">' + esc(l.cod) + (l.bal === 'peso' ? ' · ⚖️ ao peso' : l.bal === 'preco' ? ' · 🏷️ ao preço' : '') + (l.stk ? '<br><small>Stock: ' + esc(l.stk) + '</small>' : '') + '</div></td>' +
     '<td class="num"><input type="text" data-f="qtd" inputmode="decimal" value="' + fmtQ(l.qtd) + '"></td>' +
     '<td class="num"><input type="text" data-f="pu" inputmode="decimal" value="' + (Math.abs(l.pu * 100 - Math.round(l.pu * 100)) > 1e-6 ? (Math.round(l.pu * 1000) / 1000).toFixed(3) : r2(l.pu).toFixed(2)).replace('.', ',') + '"></td>' +
     '<td class="num"><input type="text" data-f="total" inputmode="decimal" value="' + r2(l.total).toFixed(2).replace('.', ',') + '"></td>' +
-    '<td><input type="checkbox" data-f="volta" title="Soma a taxa Volta"' + (l.volta ? ' checked' : '') + '></td>' +
+    '<td>' + (l.pai ? '' : '<input type="checkbox" data-f="volta" title="Artigo com taxa Volta (acrescenta a linha da taxa)"' + (l.volta ? ' checked' : '') + '>') + '</td>' +
     '<td><button class="red" data-del="1">✕</button></td></tr>').join('');
   $('#vazio').hidden = venda.lin.length > 0;
   $('#t-sub').textContent = eur(T.sub);
-  $('#t-taxa').textContent = eur(T.taxa);
-  $('#t-un').textContent = T.un > 0 ? '(' + fmtQ(T.un) + ' un. × ' + eur(taxaVal) + ')' : '';
   $('#t-total').textContent = eur(T.total);
   $('#bx-din').hidden = venda.pag !== 'Dinheiro';
   const rec = numPT(venda.rec);
@@ -541,7 +536,11 @@ $('#lin').addEventListener('change', e => {
   const tr = e.target.closest('tr'); if (!tr) return;
   const l = venda.lin.find(x => x.id === tr.dataset.id); if (!l) return;
   const f = e.target.dataset.f;
-  if (f === 'volta') { l.volta = e.target.checked; alterou(); return; }
+  if (f === 'volta') {
+    l.volta = e.target.checked;
+    if (l.volta) { l.vf = l.vf || 1; voltaFilho(l, true); } else venda.lin = venda.lin.filter(c => !(c.pai === l.id && c.cod === codTaxa));
+    alterou(); return;
+  }
   const v = numPT(e.target.value);
   if (f === 'qtd') { l.qtd = r3(v); l.total = r2(l.qtd * l.pu); }
   else if (f === 'pu') { l.pu = r3(v); if (l.bal === 'preco' && l.pu > 0) l.qtd = r3(l.total / l.pu); else l.total = r2(l.qtd * l.pu); }
@@ -559,15 +558,9 @@ $('#lin').addEventListener('click', e => {
 /* ---- pagamento e restantes campos ---- */
 $('#pag').addEventListener('change', e => { venda.pag = e.target.value; alterou(); });
 $('#rec').addEventListener('input', e => { venda.rec = e.target.value.trim(); render(); guardarRascunho(); });
-$('#notas').addEventListener('click', e => {
-  const v = e.target.dataset.v; if (!v) return;
-  venda.rec = v === 'exato' ? String(totais().total).replace('.', ',') : v; $('#rec').value = venda.rec; alterou();
-});
 $('#cartao').addEventListener('input', e => { venda.cartao = e.target.value.trim(); guardarRascunho(); });
 $('#doc').addEventListener('change', e => { venda.doc = e.target.value; guardarRascunho(); });
 $('#obs').addEventListener('input', e => { venda.obs = e.target.value; guardarRascunho(); });
-$('#extra').addEventListener('change', e => { venda.extra = parseFloat(e.target.value.replace(',', '.')) || 0; e.target.value = venda.extra; alterou(); });
-$('#taxaval').addEventListener('change', async e => { const v = numPT(e.target.value); taxaVal = v > 0 ? v : 0.10; e.target.value = taxaVal.toFixed(2).replace('.', ','); await kvSet('pos_taxaVal', taxaVal); alterou(); });
 
 /* ---- pesquisa ---- */
 let pqRes = [], pqSel = 0;
@@ -612,7 +605,7 @@ $('#b-livre').addEventListener('click', async () => {
 /* ---- finalizar / cancelar ---- */
 async function nova() {
   venda = novaVenda(); ultimaLinha = null;
-  $('#cod').value = ''; $('#rec').value = ''; $('#cartao').value = ''; $('#obs').value = ''; $('#extra').value = '0';
+  $('#cod').value = ''; $('#rec').value = ''; $('#cartao').value = ''; $('#obs').value = '';
   $('#pag').value = 'Dinheiro'; $('#doc').value = 'Fatura simplificada';
   render(); await kvDel('pos_rascunho'); focoCod();
 }
@@ -683,7 +676,7 @@ async function listarVendas() {
   const ok = v.filter(s => s.estado !== 'anulada'), soma = f => r2(ok.filter(f).reduce((a, s) => a + s.total, 0));
   $('#vd-resumo').innerHTML = '<b>Resumo do dia (sem anuladas)</b><div class="linha"><span>' + ok.length + ' venda(s)</span><b>' + eur(soma(() => true)) + '</b></div>' +
     ['Dinheiro', 'Cartão multibanco', 'Cheque'].map(p => '<div class="linha"><span>' + p + '</span><span>' + eur(soma(s => s.pag === p)) + '</span></div>').join('') +
-    '<div class="linha"><span>♻️ Taxa Volta (incluída)</span><span>' + eur(r2(ok.reduce((a, s) => a + s.taxa, 0))) + '</span></div>';
+    '<div class="linha"><span>♻️ Taxa Volta (incluída)</span><span>' + eur(r2(ok.reduce((a, s) => a + s.taxa + (s.lin || []).filter(l => l.cod === codTaxa).reduce((q, l) => q + l.total, 0), 0))) + '</span></div>';
   $('#vd-info').textContent = todas.length + ' venda(s) guardadas no total neste computador.';
   listarVendas._todas = todas;
 }
@@ -844,10 +837,9 @@ window.addEventListener('beforeunload', e => { if (venda.lin.length) { e.prevent
     codTaxa = (await kvGet('codTaxa')) || 'VALOR DEPOSITO';
     taxaVal = 0.10;   // taxa Volta fixa
     const r = await kvGet('pos_rascunho');
-    if (r && r.lin && r.lin.length) { venda = Object.assign(novaVenda(), r); toast('Venda em curso recuperada (' + r.lin.length + ' linha(s)).', 4500); }
+    if (r && r.lin && r.lin.length) { venda = Object.assign(novaVenda(), r); venda.extra = 0; venda.lin.filter(l => l.volta && !l.pai).forEach(l => voltaFilho(l, true)); toast('Venda em curso recuperada (' + r.lin.length + ' linha(s)).', 4500); }
   } catch (e) { toast('Aviso: armazenamento local indisponível (' + e.message + ')', 6000); }
-  $('#taxaval').value = taxaVal.toFixed(2).replace('.', ',');
-  $('#pag').value = venda.pag; $('#doc').value = venda.doc; $('#rec').value = venda.rec; $('#cartao').value = venda.cartao; $('#obs').value = venda.obs; $('#extra').value = venda.extra || 0;
+  $('#pag').value = venda.pag; $('#doc').value = venda.doc; $('#rec').value = venda.rec; $('#cartao').value = venda.cartao; $('#obs').value = venda.obs;
   render(); focoCod(); pastaInit();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
   if (!artigos.length) { $('#loading').style.display = 'flex'; await atualizarLista(); $('#loading').style.display = 'none'; infoArtigos(); }
