@@ -68,6 +68,7 @@
   <button data-t="inv">📦 Guias/Inventário</button>
   <button data-t="leit">📋 Leituras</button>
   <button data-t="fat">🧾 Faturas</button>
+  <button data-t="etq">🏷 Etiquetas</button>
   <button data-t="art">⚙️ Artigos</button>
 </nav>
 <div id="doc-bar" hidden style="background:#fff;padding:10px 12px;border-bottom:1px solid #ccd">
@@ -149,6 +150,8 @@
 
 <!-- ============ ARTIGOS ============ -->
 <section id="fat"></section>
+
+<section id="etq"></section>
 
 <section id="art">
   <div class="card">
@@ -422,9 +425,12 @@ function resolver(lido, usar, src) {
 }
 
 /* ---------- GS1-128: validade, lote e unidades da caixa ---------- */
-const VERSAO = 'v21', VERSAO_DATA = '24/11/2026 01:30';
+const VERSAO = 'v22', VERSAO_DATA = '24/11/2026 02:30';
 // Novidades de cada versão em relação à anterior (a mais recente primeiro). Acrescenta aqui a cada versão nova.
 const NOVIDADES = [
+  { v: 'v22', data: '24/11/2026 02:30', itens: [
+    'Novo separador Etiquetas: junta os artigos de uma guia (ou acrescenta artigos um a um), mostra a etiqueta de prateleira de 66 × 31,5 mm, deixa corrigir descrição, preço, conteúdo (preço por litro/kg tirado da descrição, a confirmar), Volta e caixa, e cria um PDF A4 com 27 etiquetas por folha.',
+    'Os códigos de embalagem (caixas) dão etiquetas “Caixa de N unidades” com o preço da caixa e o preço de cada unidade.' ] },
   { v: 'v21', data: '24/11/2026 01:30', itens: [
     'POS: a taxa Volta passa a aparecer numa linha própria logo abaixo do artigo (como a taxa do saco), em vez de um resumo no menu lateral. Marcar ou desmarcar o ♻️ acrescenta ou retira essa linha.',
     'POS: bipar outra vez um código já bipado cria uma linha nova em vez de somar à quantidade.',
@@ -580,6 +586,7 @@ function irPara(t) {
   $('#doc-bar').hidden = !(t === 'inv' || t === 'leit');
   if (t === 'leit') renderLeituras();
   if (t === 'fat') ftAbrirSeparador();
+  if (t === 'etq') etqAbrir();
   window.scrollTo(0, 0);
 }
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) irPara(b.dataset.t); });
@@ -1014,6 +1021,7 @@ $('#ar-upd').addEventListener('click', async () => {
 })();
 </script>
 <script src="faturas.js"></script>
+<script src="etiquetas.js"></script>
 <div id="dlg"><div class="box"><h3>Bom Dia São Jorge</h3><p id="dlg-m"></p><input type="text" id="dlg-i" autocomplete="off"><div class="row"><button class="sec" id="dlg-c">Cancelar</button><button class="pri" id="dlg-ok">OK</button></div></div></div>
 </body>
 </html>
